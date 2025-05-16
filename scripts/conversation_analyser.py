@@ -1008,7 +1008,7 @@ class AIConversationAnalyzer:
         else:
             output_dir = self.output_dir
         
-        file_name = analysis.get('file_name', 'conversation').replace('.txt', '').replace('.json', '')
+        file_name = analysis.get('file_name', 'conversation').replace('.txt', '').replace('.json', '').replace('.md', '')
         metrics = analysis.get('metrics', {})
         rubric_scores = analysis.get('rubric_scores', {})
         
@@ -1198,7 +1198,7 @@ class AIConversationAnalyzer:
         text_files = []
         for root, _, files in os.walk(folder_path):
             for file in files:
-                if file.endswith(('.txt', '.json')):
+                if file.endswith(('.txt', '.json','.md')):
                     text_files.append(os.path.join(root, file))
         
         print(f"Found {len(text_files)} conversation files")

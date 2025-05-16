@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlencode
+import tempfile
 
 
 def validate_html_file(file_path, validator_url="https://validator.w3.org/nu/"):
@@ -58,18 +59,56 @@ def validate_html_file(file_path, validator_url="https://validator.w3.org/nu/"):
         return (file_path, "HTML", f"Validation failed: {str(e)}\n", -1, -1)
 
 
-def validate_css_file(file_path, validator_url="https://jigsaw.w3.org/css-validator/validator"):
+def extract_css_from_html(file_path):
+    """
+    Extracts CSS from style tags in an HTML file.
+    
+    Args:
+        file_path: Path to the HTML file
+        
+    Returns:
+        Tuple of (css_content, extracted_from) where extracted_from is a list of source locations
+    """
+    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+        html_content = f.read()
+    
+    # Extract CSS from style tags
+    style_tags = re.findall(r'<style[^>]*>(.*?)</style>', html_content, re.DOTALL)
+    
+    if not style_tags:
+        return None, []
+    
+    # Combine all CSS content from different style tags
+    css_content = ""
+    extracted_from = []
+    
+    for i, style in enumerate(style_tags, 1):
+        css_content += f"/* CSS from <style> tag #{i} */\n{style}\n\n"
+        extracted_from.append(f"<style> tag #{i}")
+    
+    return css_content, extracted_from
+
+
+def validate_css_file(file_path, validator_url="https://jigsaw.w3.org/css-validator/validator", 
+                     is_extracted=False, extracted_from=None):
     """
     Validates a CSS file using the W3C CSS validator API and returns the validation report.
     
     Args:
         file_path: Path to the CSS file to validate
         validator_url: URL of the W3C CSS validator service
+        is_extracted: Whether this CSS was extracted from an HTML file
+        extracted_from: Source information if extracted
         
     Returns:
-        Tuple of (file_path, file_type, validation_report, error_count, warning_count)
+        Tuple of (file_path, file_type, validation_report, error_count, warning_count, is_extracted, extracted_from)
     """
-    print(f"Validating CSS file: {file_path}...")
+    css_source = f"{file_path}"
+    if is_extracted:
+        css_source = f"{file_path} (extracted from HTML)"
+        print(f"Validating CSS extracted from HTML file: {file_path}...")
+    else:
+        print(f"Validating CSS file: {file_path}...")
     
     # Read the CSS file content
     with open(file_path, 'rb') as f:
@@ -95,6 +134,14 @@ def validate_css_file(file_path, validator_url="https://jigsaw.w3.org/css-valida
         
         if response.status_code == 200:
             report = f"Validated on: {response.headers.get('Date', 'Unknown date')}\n\n"
+            
+            # Add information about extracted CSS
+            if is_extracted:
+                report += f"CSS extracted from: {file_path}\n"
+                if extracted_from:
+                    report += f"Source: {', '.join(extracted_from)}\n"
+                report += "\n"
+            
             report += response.text
             
             # Count errors and warnings in CSS validation results
@@ -108,14 +155,14 @@ def validate_css_file(file_path, validator_url="https://jigsaw.w3.org/css-valida
             error_count = int(error_match.group(1)) if error_match else 0
             warning_count = int(warning_match.group(1)) if warning_match else 0
             
-            return (file_path, "CSS", report, error_count, warning_count)
+            return (css_source, "CSS", report, error_count, warning_count, is_extracted, extracted_from)
         else:
             error_msg = f"Error: Received status code {response.status_code} from validator\n"
             error_msg += f"Response: {response.text[:200]}...\n"
-            return (file_path, "CSS", error_msg, -1, -1)
+            return (css_source, "CSS", error_msg, -1, -1, is_extracted, extracted_from)
             
     except requests.exceptions.RequestException as e:
-        return (file_path, "CSS", f"Validation failed: {str(e)}\n", -1, -1)
+        return (css_source, "CSS", f"Validation failed: {str(e)}\n", -1, -1, is_extracted, extracted_from)
 
 
 def find_files(folder_path, extensions):
@@ -235,25 +282,30 @@ def create_markdown_report(validation_results, output_file):
     Creates a single Markdown file with all validation reports.
     
     Args:
-        validation_results: List of (file_path, file_type, report, error_count, warning_count) tuples
+        validation_results: List of validation result tuples
         output_file: Path to the output Markdown file
     """
     # Group results by file type
     html_results = [r for r in validation_results if r[1] == "HTML"]
     css_results = [r for r in validation_results if r[1] == "CSS"]
+    embedded_css_results = [r for r in validation_results if r[1] == "CSS" and len(r) > 5 and r[5]]
     
     with open(output_file, 'w', encoding='utf-8') as f:
         # Write header
         f.write(f"# Web Validation Report Summary\n\n")
         f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
-        f.write(f"Total files validated: {len(validation_results)}\n")
+        f.write(f"Total files validated: {len(html_results) + len([r for r in css_results if not (len(r) > 5 and r[5])])}\n")
         f.write(f"* HTML files: {len(html_results)}\n")
-        f.write(f"* CSS files: {len(css_results)}\n\n")
+        f.write(f"* CSS files: {len([r for r in css_results if not (len(r) > 5 and r[5])])}\n")
+        if embedded_css_results:
+            f.write(f"* HTML files with embedded CSS: {len(embedded_css_results)}\n")
+        f.write("\n")
         
         # Calculate validation scores
         html_score = calculate_validation_score(validation_results, "HTML")
         css_score = calculate_validation_score(validation_results, "CSS")
-        combined_score = (html_score * len(html_results) + css_score * len(css_results)) / max(1, len(validation_results))
+        total_count = len(html_results) + len(css_results)
+        combined_score = (html_score * len(html_results) + css_score * len(css_results)) / max(1, total_count)
         
         # Map scores to rubric levels
         html_performance, html_points, html_percentage = map_score_to_rubric(html_score, 10)
@@ -286,10 +338,20 @@ def create_markdown_report(validation_results, output_file):
         
         # Create summary table
         f.write("## Validation Summary\n\n")
-        f.write("| File | Type | Errors | Warnings | Status |\n")
-        f.write("|------|------|--------|----------|--------|\n")
+        f.write("| File | Type | Errors | Warnings | Status | Notes |\n")
+        f.write("|------|------|--------|----------|--------|-------|\n")
         
-        for file_path, file_type, _, error_count, warning_count in validation_results:
+        for result in validation_results:
+            file_path, file_type, _, error_count, warning_count = result[:5]
+            
+            # Check if this is extracted CSS
+            is_extracted = False
+            extracted_from = ""
+            if len(result) > 5:
+                is_extracted = result[5]
+                if len(result) > 6 and result[6]:
+                    extracted_from = f"Extracted from {', '.join(result[6])}"
+            
             file_name = os.path.relpath(file_path)
             
             # Determine status
@@ -302,7 +364,12 @@ def create_markdown_report(validation_results, output_file):
             else:
                 status = "⚠️ Invalid"
             
-            f.write(f"| {file_name} | {file_type} | {error_count} | {warning_count} | {status} |\n")
+            if is_extracted:
+                notes = "Embedded CSS"
+            else:
+                notes = ""
+            
+            f.write(f"| {file_name} | {file_type} | {error_count} | {warning_count} | {status} | {notes} |\n")
         
         f.write("\n")
         
@@ -319,12 +386,24 @@ def create_markdown_report(validation_results, output_file):
             f.write("\n")
         
         # CSS files in TOC
-        if css_results:
+        regular_css_results = [r for r in css_results if not (len(r) > 5 and r[5])]
+        if regular_css_results:
             f.write("### CSS Files\n\n")
-            for idx, (file_path, _, _, _, _) in enumerate(css_results, 1):
+            for idx, result in enumerate(regular_css_results, 1):
+                file_path = result[0]
                 file_name = os.path.relpath(file_path)
                 anchor = file_name.replace(' ', '-').replace('.', '').replace('/', '-').lower()
                 f.write(f"{idx}. [{file_name}](#{anchor})\n")
+            f.write("\n")
+        
+        # Embedded CSS in TOC
+        if embedded_css_results:
+            f.write("### Embedded CSS\n\n")
+            for idx, result in enumerate(embedded_css_results, 1):
+                file_path = result[0]
+                file_name = os.path.relpath(file_path)
+                anchor = f"embedded-css-{idx}"
+                f.write(f"{idx}. [CSS in {file_name}](#{anchor})\n")
             f.write("\n")
         
         f.write("\n---\n\n")
@@ -356,10 +435,11 @@ def create_markdown_report(validation_results, output_file):
                 f.write("\n```\n\n")
                 f.write("---\n\n")  # Separator between reports
         
-        # CSS validation reports
-        if css_results:
+        # Regular CSS validation reports
+        if regular_css_results:
             f.write("# CSS Validation Results\n\n")
-            for file_path, _, report, error_count, warning_count in css_results:
+            for result in regular_css_results:
+                file_path, _, report, error_count, warning_count = result[:5]
                 file_name = os.path.relpath(file_path)
                 anchor = file_name.replace(' ', '-').replace('.', '').replace('/', '-').lower()
                 f.write(f"<h2 id='{anchor}'>{file_name}</h2>\n\n")
@@ -382,6 +462,37 @@ def create_markdown_report(validation_results, output_file):
                 f.write(report)
                 f.write("\n```\n\n")
                 f.write("---\n\n")  # Separator between reports
+        
+        # Embedded CSS validation reports
+        if embedded_css_results:
+            f.write("# Embedded CSS Validation Results\n\n")
+            for idx, result in enumerate(embedded_css_results, 1):
+                file_path, _, report, error_count, warning_count = result[:5]
+                extracted_from = result[6] if len(result) > 6 else []
+                
+                file_name = os.path.relpath(file_path)
+                anchor = f"embedded-css-{idx}"
+                f.write(f"<h2 id='{anchor}'>CSS in {file_name}</h2>\n\n")
+                
+                # Add a summary for this file
+                if error_count == -1:
+                    status = "❌ Failed to validate"
+                    error_count = "N/A"
+                    warning_count = "N/A"
+                elif error_count == 0:
+                    status = "✅ Valid"
+                else:
+                    status = "⚠️ Invalid"
+                
+                f.write(f"**Source:** {file_name} ({', '.join(extracted_from) if extracted_from else 'embedded CSS'})  \n")
+                f.write(f"**Status:** {status}  \n")
+                f.write(f"**Errors:** {error_count}  \n")
+                f.write(f"**Warnings:** {warning_count}  \n\n")
+                
+                f.write("```\n")  # Code block for formatting
+                f.write(report)
+                f.write("\n```\n\n")
+                f.write("---\n\n")  # Separator between reports
 
 
 def create_summary_only_report(validation_results, output_file):
@@ -389,12 +500,14 @@ def create_summary_only_report(validation_results, output_file):
     Creates a Markdown file with just the summary table of validation results.
     
     Args:
-        validation_results: List of (file_path, file_type, report, error_count, warning_count) tuples
+        validation_results: List of validation result tuples
         output_file: Path to the output Markdown file
     """
     # Group results by file type
     html_results = [r for r in validation_results if r[1] == "HTML"]
     css_results = [r for r in validation_results if r[1] == "CSS"]
+    embedded_css_results = [r for r in validation_results if r[1] == "CSS" and len(r) > 5 and r[5]]
+    regular_css_results = [r for r in css_results if not (len(r) > 5 and r[5])]
     
     # Sort results by error count (highest first), then warning count, then filename
     sorted_results = sorted(
@@ -410,7 +523,8 @@ def create_summary_only_report(validation_results, output_file):
         # Calculate validation scores
         html_score = calculate_validation_score(validation_results, "HTML")
         css_score = calculate_validation_score(validation_results, "CSS")
-        combined_score = (html_score * len(html_results) + css_score * len(css_results)) / max(1, len(validation_results))
+        total_count = len(html_results) + len(css_results)
+        combined_score = (html_score * len(html_results) + css_score * len(css_results)) / max(1, total_count)
         
         # Map scores to rubric levels
         html_performance, html_points, html_percentage = map_score_to_rubric(html_score, 10)
@@ -434,21 +548,31 @@ def create_summary_only_report(validation_results, output_file):
         failed_validations = sum(1 for r in validation_results if r[3] == -1)
         
         f.write(f"## Statistics\n\n")
-        f.write(f"- **Total files validated:** {len(validation_results)}\n")
+        f.write(f"- **Total files validated:** {len(html_results) + len(regular_css_results)}\n")
         f.write(f"  - HTML files: {len(html_results)}\n")
-        f.write(f"  - CSS files: {len(css_results)}\n")
-        f.write(f"- **Valid files:** {valid_files} ({valid_files/len(validation_results)*100:.1f}%)\n")
-        f.write(f"- **Invalid files:** {invalid_files} ({invalid_files/len(validation_results)*100:.1f}%)\n")
+        f.write(f"  - CSS files: {len(regular_css_results)}\n")
+        if embedded_css_results:
+            f.write(f"  - HTML files with embedded CSS: {len(embedded_css_results)}\n")
+        f.write(f"- **Valid files:** {valid_files} ({valid_files/max(1, len(validation_results))*100:.1f}%)\n")
+        f.write(f"- **Invalid files:** {invalid_files} ({invalid_files/max(1, len(validation_results))*100:.1f}%)\n")
         f.write(f"- **Failed validations:** {failed_validations}\n")
         f.write(f"- **Total errors:** {total_errors}\n")
         f.write(f"- **Total warnings:** {total_warnings}\n\n")
         
         # Create summary table
         f.write("## Validation Results\n\n")
-        f.write("| File | Type | Errors | Warnings | Status |\n")
-        f.write("|------|------|--------|----------|--------|\n")
+        f.write("| File | Type | Errors | Warnings | Status | Notes |\n")
+        f.write("|------|------|--------|----------|--------|-------|\n")
         
-        for file_path, file_type, _, error_count, warning_count in sorted_results:
+        for result in sorted_results:
+            file_path, file_type = result[:2]
+            error_count, warning_count = result[3:5]
+            
+            # Check if this is extracted CSS
+            is_extracted = False
+            if len(result) > 5:
+                is_extracted = result[5]
+            
             file_name = os.path.relpath(file_path)
             
             # Determine status
@@ -461,25 +585,31 @@ def create_summary_only_report(validation_results, output_file):
             else:
                 status = "⚠️ Invalid"
             
-            f.write(f"| {file_name} | {file_type} | {error_count} | {warning_count} | {status} |\n")
-
+            if is_extracted:
+                notes = "Embedded CSS"
+            else:
+                notes = ""
+            
+            f.write(f"| {file_name} | {file_type} | {error_count} | {warning_count} | {status} | {notes} |\n")
 
 def create_rubric_report(validation_results, output_file):
     """
     Creates a Markdown file with a rubric-focused assessment.
     
     Args:
-        validation_results: List of (file_path, file_type, report, error_count, warning_count) tuples
+        validation_results: List of validation result tuples
         output_file: Path to the output Markdown file
     """
     # Group results by file type
     html_results = [r for r in validation_results if r[1] == "HTML"]
     css_results = [r for r in validation_results if r[1] == "CSS"]
+    embedded_css_results = [r for r in validation_results if r[1] == "CSS" and len(r) > 5 and r[5]]
     
     # Calculate validation scores
     html_score = calculate_validation_score(validation_results, "HTML")
     css_score = calculate_validation_score(validation_results, "CSS")
-    combined_score = (html_score * len(html_results) + css_score * len(css_results)) / max(1, len(validation_results))
+    total_count = len(html_results) + len(css_results)
+    combined_score = (html_score * len(html_results) + css_score * len(css_results)) / max(1, total_count)
     
     # Map scores to rubric performance levels
     _, combined_points, _ = map_score_to_rubric(combined_score, 10)
@@ -490,9 +620,16 @@ def create_rubric_report(validation_results, output_file):
         f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
         
         # Calculate relevant statistics
-        total_files = len(validation_results)
+        total_files = len(html_results) + len([r for r in css_results if not (len(r) > 5 and r[5])])
         valid_html = sum(1 for r in html_results if r[3] == 0 and r[3] != -1)
         valid_css = sum(1 for r in css_results if r[3] == 0 and r[3] != -1)
+        
+        # Note about embedded CSS
+        if embedded_css_results:
+            f.write("## Note on Embedded CSS\n\n")
+            f.write(f"Found and validated CSS embedded in {len(embedded_css_results)} HTML files. ")
+            f.write("While embedding CSS in HTML is technically valid, separating CSS into external files ")
+            f.write("is generally recommended for better maintainability and separation of concerns.\n\n")
         
         # Map to rubric criteria
         f.write("## Assessment According to Rubric\n\n")
@@ -514,7 +651,10 @@ def create_rubric_report(validation_results, output_file):
         f.write("The code quality score is based on W3C validation results:\n\n")
         
         f.write(f"- **HTML Files:** {len(html_results)} files, {valid_html} valid ({valid_html/max(1, len(html_results))*100:.1f}%)\n")
-        f.write(f"- **CSS Files:** {len(css_results)} files, {valid_css} valid ({valid_css/max(1, len(css_results))*100:.1f}%)\n")
+        f.write(f"- **CSS Files:** {len([r for r in css_results if not (len(r) > 5 and r[5])])} files, {valid_css} valid ({valid_css/max(1, len([r for r in css_results if not (len(r) > 5 and r[5])]))*100:.1f}%)\n")
+        if embedded_css_results:
+            valid_embedded_css = sum(1 for r in embedded_css_results if r[3] == 0 and r[3] != -1)
+            f.write(f"- **Embedded CSS:** Found in {len(embedded_css_results)} HTML files, {valid_embedded_css} valid ({valid_embedded_css/max(1, len(embedded_css_results))*100:.1f}%)\n")
         f.write(f"- **Combined Score:** {combined_score:.2f}/10\n\n")
         
         f.write("### Recommendations for Improvement\n\n")
@@ -524,7 +664,8 @@ def create_rubric_report(validation_results, output_file):
         warning_patterns = {}
         
         # Find common error types
-        for file_path, file_type, report, error_count, warning_count in validation_results:
+        for result in validation_results:
+            file_path, file_type, report, error_count, warning_count = result[:5]
             if error_count > 0 and report:
                 lines = report.split('\n')
                 for line in lines:
@@ -560,8 +701,11 @@ def create_rubric_report(validation_results, output_file):
         if valid_css < len(css_results):
             f.write("2. **CSS Validation**: Address CSS issues to ensure cross-browser compatibility\n")
         
-        f.write("3. **Best Practices**: Follow HTML5 and CSS3 best practices for maintainable code\n")
-        f.write("4. **Documentation**: Add appropriate comments to explain complex code sections\n")
+        if embedded_css_results:
+            f.write("3. **CSS Organization**: Consider moving embedded CSS to external stylesheet files for better maintainability\n")
+        
+        f.write("4. **Best Practices**: Follow HTML5 and CSS3 best practices for maintainable code\n")
+        f.write("5. **Documentation**: Add appropriate comments to explain complex code sections\n")
         
         # Summary
         f.write("\n## Summary\n\n")
@@ -597,6 +741,8 @@ if __name__ == "__main__":
                         help='Directory for individual reports if enabled (default: validation_reports)')
     parser.add_argument('--summary-only', action='store_true',
                         help='Generate only the summary report without detailed validation reports')
+    parser.add_argument('--skip-embedded-css', action='store_true',
+                        help='Skip extraction and validation of CSS embedded in HTML files')
     
     args = parser.parse_args()
     
@@ -606,6 +752,9 @@ if __name__ == "__main__":
     
     # Find all files to validate
     files_to_validate = []
+    html_files = []
+    css_files = []
+    
     if validate_html:
         html_files = find_files(args.folder, ['.html', '.htm'])
         print(f"Found {len(html_files)} HTML files to validate")
@@ -617,6 +766,23 @@ if __name__ == "__main__":
         files_to_validate.extend((file_path, 'CSS') for file_path in css_files)
     
     validation_results = []
+    temp_files = []  # Track temporary files to clean up later
+    
+    # Extract CSS from HTML files if needed
+    embedded_css_count = 0
+    if validate_css and not args.skip_embedded_css and validate_html:
+        for html_file in html_files:
+            css_content, extracted_from = extract_css_from_html(html_file)
+            if css_content:
+                embedded_css_count += 1
+                # Create a temporary file for the CSS
+                with tempfile.NamedTemporaryFile(suffix='.css', delete=False) as temp_file:
+                    temp_file.write(css_content.encode('utf-8'))
+                    temp_files.append(temp_file.name)
+                    files_to_validate.append((temp_file.name, 'CSS', html_file, extracted_from))
+                    
+        if embedded_css_count > 0:
+            print(f"Extracted CSS from {embedded_css_count} HTML files for validation")
     
     if args.parallel > 1:
         # Parallel processing using concurrent.futures
@@ -626,11 +792,16 @@ if __name__ == "__main__":
         with ThreadPoolExecutor(max_workers=args.parallel) as executor:
             futures = []
             
-            for file_path, file_type in files_to_validate:
-                if file_type == 'HTML':
-                    futures.append(executor.submit(validate_html_file, file_path, args.html_validator))
-                else:  # CSS
-                    futures.append(executor.submit(validate_css_file, file_path, args.css_validator))
+            for file_info in files_to_validate:
+                if len(file_info) == 2:  # Regular file
+                    file_path, file_type = file_info
+                    if file_type == 'HTML':
+                        futures.append(executor.submit(validate_html_file, file_path, args.html_validator))
+                    else:  # CSS
+                        futures.append(executor.submit(validate_css_file, file_path, args.css_validator))
+                else:  # Extracted CSS
+                    file_path, file_type, source_html, extracted_from = file_info
+                    futures.append(executor.submit(validate_css_file, file_path, args.css_validator, True, extracted_from))
             
             for future in concurrent.futures.as_completed(futures):
                 result = future.result()
@@ -638,12 +809,18 @@ if __name__ == "__main__":
                 print(f"Completed validation for {result[0]}")
     else:
         # Sequential processing
-        for file_path, file_type in files_to_validate:
-            if file_type == 'HTML':
-                result = validate_html_file(file_path, args.html_validator)
-            else:  # CSS
-                result = validate_css_file(file_path, args.css_validator)
-            validation_results.append(result)
+        for file_info in files_to_validate:
+            if len(file_info) == 2:  # Regular file
+                file_path, file_type = file_info
+                if file_type == 'HTML':
+                    result = validate_html_file(file_path, args.html_validator)
+                else:  # CSS
+                    result = validate_css_file(file_path, args.css_validator)
+                validation_results.append(result)
+            else:  # Extracted CSS
+                file_path, file_type, source_html, extracted_from = file_info
+                result = validate_css_file(file_path, args.css_validator, True, extracted_from)
+                validation_results.append(result)
     
     # Create the consolidated Markdown report
     if not args.summary_only:
@@ -662,9 +839,24 @@ if __name__ == "__main__":
     if args.individual:
         os.makedirs(args.individual_dir, exist_ok=True)
         
-        for file_path, file_type, report, _, _ in validation_results:
-            relative_path = os.path.relpath(file_path, args.folder)
-            output_file = os.path.join(args.individual_dir, f"{relative_path}.{file_type.lower()}-validation.txt")
+        for result in validation_results:
+            file_path = result[0]
+            file_type = result[1]
+            report = result[2]
+            
+            # Skip temp files for extracted CSS
+            is_extracted = False
+            if len(result) > 5:
+                is_extracted = result[5]
+            
+            if is_extracted:
+                # Use a different naming scheme for extracted CSS
+                relative_path = os.path.relpath(file_path)
+                output_file = os.path.join(args.individual_dir, f"{relative_path}.embedded-css-validation.txt")
+            else:
+                relative_path = os.path.relpath(file_path, args.folder)
+                output_file = os.path.join(args.individual_dir, f"{relative_path}.{file_type.lower()}-validation.txt")
+            
             os.makedirs(os.path.dirname(output_file), exist_ok=True)
             
             with open(output_file, 'w', encoding='utf-8') as f:
@@ -672,5 +864,12 @@ if __name__ == "__main__":
                 f.write(report)
                 
             print(f"Individual report saved to {output_file}")
+    
+    # Clean up temporary files
+    for temp_file in temp_files:
+        try:
+            os.remove(temp_file)
+        except Exception as e:
+            print(f"Warning: Could not delete temporary file {temp_file}: {e}")
     
     print("Validation complete!")

@@ -66,13 +66,25 @@ class DeploymentAnalyzer:
     
     def _extract_repo_info(self):
         """Extract repository owner and name from the GitHub URL."""
-        pattern = r"github\.com/([^/]+)/([^/]+)"
-        match = re.search(pattern, self.github_repo_url)
+        # Handle HTTPS GitHub URLs
+        https_pattern = r"github\.com/([^/]+)/([^/]+)"
+        https_match = re.search(https_pattern, self.github_repo_url)
         
-        if match:
-            return match.group(1), match.group(2)
-        else:
-            raise ValueError("Invalid GitHub repository URL format")
+        if https_match:
+            return https_match.group(1), https_match.group(2)
+        
+        # Handle SSH GitHub URLs
+        ssh_pattern = r"git@github\.com:([^/]+)/([^/]+)"
+        ssh_match = re.search(ssh_pattern, self.github_repo_url)
+        
+        if ssh_match:
+            # Remove .git suffix if present
+            repo_name = ssh_match.group(2)
+            if repo_name.endswith(".git"):
+                repo_name = repo_name[:-4]
+            return ssh_match.group(1), repo_name
+        
+        raise ValueError("Invalid GitHub repository URL format. Use either HTTPS (https://github.com/owner/repo) or SSH (git@github.com:owner/repo) format.")
     
     def get_repo_contents(self, path=""):
         """Get contents of a repository directory."""
@@ -533,14 +545,14 @@ class DeploymentAnalyzer:
         if title_match:
             seo_results["has_title"] = True
         
-        # Check for meta description
-        meta_desc_pattern = r'<meta\s+name=["\'']description["\']\s+content=["\'](.*?)["\']\s*/?>'
+        # Check for meta description - FIXED PATTERN
+        meta_desc_pattern = r'<meta\s+name=["|\']description["|\']s*content=["|\'](.+?)["|\']s*/?>'
         meta_desc_match = re.search(meta_desc_pattern, html_content, re.IGNORECASE)
         if meta_desc_match:
             seo_results["has_meta_description"] = True
         
-        # Check for viewport meta tag
-        viewport_pattern = r'<meta\s+name=["\'']viewport["\']\s+content=["\'](.*?)["\']\s*/?>'
+        # Check for viewport meta tag - FIXED PATTERN
+        viewport_pattern = r'<meta\s+name=["|\']viewport["|\']s*content=["|\'](.+?)["|\']s*/?>'
         viewport_match = re.search(viewport_pattern, html_content, re.IGNORECASE)
         if viewport_match:
             seo_results["has_viewport_meta"] = True
@@ -557,7 +569,7 @@ class DeploymentAnalyzer:
         
         for img_match in img_matches:
             img_tag = img_match.group(0)
-            alt_pattern = r'\balt=["\'](.*?)["\']\b'
+            alt_pattern = r'\balt=["|\'](.+?)["|\']'
             alt_match = re.search(alt_pattern, img_tag, re.IGNORECASE)
             
             if not alt_match:
@@ -592,7 +604,7 @@ class DeploymentAnalyzer:
             Boolean indicating if responsive design elements are present
         """
         # Check for viewport meta tag (most important for responsiveness)
-        viewport_pattern = r'<meta\s+name=["\'']viewport["\']\s+content=["\'](.*?)["\']\s*/?>'
+        viewport_pattern = r'<meta\s+name=["|\']viewport["|\']s*content=["|\'](.+?)["|\']s*/?>'
         viewport_match = re.search(viewport_pattern, html_content, re.IGNORECASE)
         if viewport_match:
             return True

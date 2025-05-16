@@ -62,31 +62,96 @@ class GitRepoAnalyzer:
     def _is_git_repo(self):
         """Check if the path is a valid Git repository."""
         try:
+            env = os.environ.copy()
+            env['GIT_SSH_COMMAND'] = 'ssh -o BatchMode=yes'
+            env['GIT_TERMINAL_PROMPT'] = '0'
+            
             result = subprocess.run(
                 ['git', 'rev-parse', '--is-inside-work-tree'],
                 cwd=self.repo_path,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
-                check=True
+                check=True,
+                env=env
             )
             return result.stdout.strip() == 'true'
         except (subprocess.SubprocessError, FileNotFoundError):
             return False
+   
+
+    def _score_to_level(self, score):
+        """
+        Convert a numeric score to a quality level label.
+        
+        Args:
+            score: Numeric score (0-10)
+            
+        Returns:
+            String indicating quality level
+        """
+        if score >= 7.5:
+            return "Distinction"
+        elif score >= 6.5:
+            return "Credit"
+        elif score >= 5.0:
+            return "Pass"
+        else:
+            return "Fail"
     
+    def _map_to_rubric(self, score, max_points):
+        """
+        Map a 0-10 score to rubric performance levels and point values.
+        
+        Args:
+            score: Score on a 0-10 scale
+            max_points: Maximum points available for this criterion
+            
+        Returns:
+            Tuple of (performance_level, points)
+        """
+        # Calculate percentage based on 0-10 scale
+        percentage = (score / 10) * 100
+        
+        # Determine performance level
+        if percentage >= 75:
+            performance = "Distinction (75-100%)"
+            # Map to points range 75-100% of max_points
+            points = max(max_points * 0.75, min(max_points, (percentage / 100) * max_points))
+        elif percentage >= 65:
+            performance = "Credit (65-74%)"
+            # Map to points range 65-74% of max_points
+            points = max(max_points * 0.65, min(max_points * 0.74, (percentage / 100) * max_points))
+        elif percentage >= 50:
+            performance = "Pass (50-64%)"
+            # Map to points range 50-64% of max_points
+            points = max(max_points * 0.5, min(max_points * 0.64, (percentage / 100) * max_points))
+        else:
+            performance = "Fail (0-49%)"
+            # Map to points range 0-49% of max_points
+            points = min(max_points * 0.49, (percentage / 100) * max_points)
+        
+        return performance, round(points, 2)
+    
+
     def run_git_command(self, command):
         """Run a Git command in the repository directory."""
         if not self.is_git_repo:
             raise ValueError("Not a valid Git repository")
         
         try:
+            env = os.environ.copy()
+            env['GIT_SSH_COMMAND'] = 'ssh -o BatchMode=yes'
+            env['GIT_TERMINAL_PROMPT'] = '0'
+            
             result = subprocess.run(
                 command,
                 cwd=self.repo_path,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
-                check=True
+                check=True,
+                env=env
             )
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:
@@ -361,6 +426,7 @@ class GitRepoAnalyzer:
         
         # Ensure score is within bounds
         return max(0, min(10, score))
+   
     
     def analyze_commit_frequency(self, commits):
         """
@@ -399,6 +465,9 @@ class GitRepoAnalyzer:
                 first_commit_date,
                 last_commit_date - timedelta(days=self.commit_frequency_criteria['days_analyzed'])
             )
+            
+            # Calculate total project duration in days
+            project_duration = (last_commit_date - first_commit_date).days + 1
             
             # Initialize data structures
             commits_per_day = defaultdict(int)
@@ -446,6 +515,14 @@ class GitRepoAnalyzer:
             total_commits = sum(daily_counts)
             commits_per_week = total_commits / weeks_analyzed
             
+            # Calculate days with commits vs total days
+            days_with_commits = sum(1 for count in daily_counts if count > 0)
+            commit_day_ratio = days_with_commits / max(1, len(daily_counts))
+            
+            # Detect "commit burst" pattern
+            max_commits_in_day = max(daily_counts) if daily_counts else 0
+            commit_burst_ratio = max_commits_in_day / max(1, total_commits)
+            
             # Calculate frequency score
             frequency_score = self._calculate_frequency_score(
                 commits_per_week=commits_per_week,
@@ -466,7 +543,12 @@ class GitRepoAnalyzer:
                 'commit_gaps': gaps,
                 'largest_gap': largest_gap,
                 'commits_per_week': commits_per_week,
-                'frequency_score': frequency_score
+                'frequency_score': frequency_score,
+                'project_duration': project_duration,
+                'days_with_commits': days_with_commits,
+                'commit_day_ratio': commit_day_ratio,
+                'commit_burst_ratio': commit_burst_ratio,
+                'max_commits_in_day': max_commits_in_day
             }
         
         except Exception as e:
@@ -474,61 +556,67 @@ class GitRepoAnalyzer:
             return {
                 'error': str(e)
             }
-    
-    def _calculate_frequency_score(self, commits_per_week, largest_gap, std_dev_ratio, contributor_count):
-        """
-        Calculate a score for commit frequency and distribution.
-        
-        Args:
-            commits_per_week: Average number of commits per week
-            largest_gap: Largest gap between commits (in days)
-            std_dev_ratio: Standard deviation of daily commits divided by mean
-            contributor_count: Number of unique contributors
+      
+        def _calculate_frequency_score(self, commits_per_week, largest_gap, std_dev_ratio, contributor_count):
+            """
+            Calculate a score for commit frequency and distribution.
             
-        Returns:
-            Frequency score (0-10)
-        """
-        score = 5  # Start with a neutral score
+            Args:
+                commits_per_week: Average number of commits per week
+                largest_gap: Largest gap between commits (in days)
+                std_dev_ratio: Standard deviation of daily commits divided by mean
+                contributor_count: Number of unique contributors
+                
+            Returns:
+                Frequency score (0-10)
+            """
+            score = 5  # Start with a neutral score
+            
+            # Evaluate commits per week
+            if commits_per_week >= self.commit_frequency_criteria['min_commits_per_week'] * 2:
+                score += 2  # Excellent
+            elif commits_per_week >= self.commit_frequency_criteria['min_commits_per_week']:
+                score += 1  # Good
+            elif commits_per_week >= self.commit_frequency_criteria['min_commits_per_week'] / 2:
+                score -= 1  # Below recommended
+            else:
+                score -= 2  # Poor
+            
+            # Evaluate largest gap
+            if largest_gap == 0:
+                # No gaps means all commits are on the same day - this is bad practice
+                score -= 4  # Severely penalize same-day commits
+            elif largest_gap <= self.commit_frequency_criteria['max_gap_days'] / 2:
+                score += 0.5  # Small gaps
+            elif largest_gap > self.commit_frequency_criteria['max_gap_days']:
+                score -= 1  # Too large gaps
+            elif largest_gap > self.commit_frequency_criteria['max_gap_days'] * 2:
+                score -= 2  # Very large gaps
+            
+            # Evaluate commit distribution evenness
+            if std_dev_ratio <= self.commit_frequency_criteria['even_distribution'] / 2:
+                score += 1  # Very even distribution
+            elif std_dev_ratio <= self.commit_frequency_criteria['even_distribution']:
+                score += 0.5  # Good distribution
+            elif std_dev_ratio > self.commit_frequency_criteria['even_distribution'] * 2:
+                score -= 1  # Very uneven distribution
+            
+            # Additional check for "commit burst" pattern (many commits in very short time)
+            if commits_per_week > 10 and largest_gap <= 1:
+                # This indicates a likely "commit burst" where many commits were made in a short period
+                score -= 3  # Severely penalize commit bursts
+            
+            # Evaluate number of contributors
+            if contributor_count >= self.commit_frequency_criteria['min_contributors'] * 2:
+                score += 1  # Multiple contributors
+            elif contributor_count >= self.commit_frequency_criteria['min_contributors']:
+                score += 0.5  # Sufficient contributors
+            else:
+                score -= 0.5  # Too few contributors
+            
+            # Ensure score is within bounds
+            return max(0, min(10, score))
         
-        # Evaluate commits per week
-        if commits_per_week >= self.commit_frequency_criteria['min_commits_per_week'] * 2:
-            score += 2  # Excellent
-        elif commits_per_week >= self.commit_frequency_criteria['min_commits_per_week']:
-            score += 1  # Good
-        elif commits_per_week >= self.commit_frequency_criteria['min_commits_per_week'] / 2:
-            score -= 1  # Below recommended
-        else:
-            score -= 2  # Poor
-        
-        # Evaluate largest gap
-        if largest_gap == 0:
-            score += 1  # No gaps (very active)
-        elif largest_gap <= self.commit_frequency_criteria['max_gap_days'] / 2:
-            score += 0.5  # Small gaps
-        elif largest_gap > self.commit_frequency_criteria['max_gap_days']:
-            score -= 1  # Too large gaps
-        elif largest_gap > self.commit_frequency_criteria['max_gap_days'] * 2:
-            score -= 2  # Very large gaps
-        
-        # Evaluate commit distribution evenness
-        if std_dev_ratio <= self.commit_frequency_criteria['even_distribution'] / 2:
-            score += 1  # Very even distribution
-        elif std_dev_ratio <= self.commit_frequency_criteria['even_distribution']:
-            score += 0.5  # Good distribution
-        elif std_dev_ratio > self.commit_frequency_criteria['even_distribution'] * 2:
-            score -= 1  # Very uneven distribution
-        
-        # Evaluate number of contributors
-        if contributor_count >= self.commit_frequency_criteria['min_contributors'] * 2:
-            score += 1  # Multiple contributors
-        elif contributor_count >= self.commit_frequency_criteria['min_contributors']:
-            score += 0.5  # Sufficient contributors
-        else:
-            score -= 0.5  # Too few contributors
-        
-        # Ensure score is within bounds
-        return max(0, min(10, score))
-    
     def analyze_repository_organization(self, repo_structure, branch_count):
         """
         Analyze the organization of the repository.
@@ -775,6 +863,7 @@ class GitRepoAnalyzer:
             
             print(f"Commits by author graph saved to {author_plot_path}")
     
+            
     def generate_summary_report(self, message_analysis, frequency_analysis, organization_analysis):
         """
         Generate a summary report in Markdown format.
@@ -811,7 +900,6 @@ class GitRepoAnalyzer:
             f.write(f"- **Total Commits:** {message_analysis.get('total_commits', 0)}\n")
             f.write(f"- **Unique Contributors:** {len(message_analysis.get('unique_contributors', []))}\n")
             f.write(f"- **Branches:** {organization_analysis.get('branch_count', 0)}\n")
-
             f.write(f"- **Repository Size:** {organization_analysis.get('file_count', 0)} files in {organization_analysis.get('directory_count', 0)} directories\n\n")
             
             # Overall scores section
@@ -823,7 +911,7 @@ class GitRepoAnalyzer:
             f.write(f"| Repository Organization | {organization_score:.2f}/10 | {self._score_to_level(organization_score)} |\n")
             f.write(f"| **Overall Version Control** | **{weighted_score:.2f}/10** | **{self._score_to_level(weighted_score)}** |\n\n")
             
-            # Rubric assessment
+            # Rubric assessment section
             f.write("## Rubric Assessment\n\n")
             
             # Map scores to rubric performance levels
@@ -832,6 +920,48 @@ class GitRepoAnalyzer:
             f.write("### Commit Frequency and Distribution (3%)\n\n")
             f.write(f"**Performance Level:** {cf_performance}\n\n")
             f.write(f"**Points:** {cf_points}/3\n\n")
+            
+            # Add observations about commit frequency
+            f.write("**Observations:**\n\n")
+            commits_per_week = frequency_analysis.get('commits_per_week', 0)
+            largest_gap = frequency_analysis.get('largest_gap', 0)
+            project_duration = frequency_analysis.get('project_duration', 0)
+            days_with_commits = frequency_analysis.get('days_with_commits', 0)
+            commit_day_ratio = frequency_analysis.get('commit_day_ratio', 0)
+            max_commits_in_day = frequency_analysis.get('max_commits_in_day', 0)
+            commit_burst_ratio = frequency_analysis.get('commit_burst_ratio', 0)
+            total_commits = message_analysis.get('total_commits', 0)
+            
+            f.write(f"- Project duration: {project_duration} days\n")
+            f.write(f"- Days with at least one commit: {days_with_commits} days ({commit_day_ratio*100:.1f}% of analyzed period)\n")
+            f.write(f"- Average commits per week: {commits_per_week:.2f}\n")
+            f.write(f"- Largest gap between commits: {largest_gap} days\n")
+            f.write(f"- Maximum commits in a single day: {max_commits_in_day} ({commit_burst_ratio*100:.1f}% of all commits)\n\n")
+            
+            # Warning signs and improvement recommendations
+            f.write("**Assessment:**\n\n")
+            
+            if project_duration <= 1:
+                f.write("- **CRITICAL ISSUE**: All commits were made on a single day. This indicates a last-minute approach rather than an iterative development process.\n")
+            elif commit_day_ratio < 0.2:
+                f.write(f"- **MAJOR ISSUE**: Commits occurred on only {days_with_commits} days out of {project_duration} days ({commit_day_ratio*100:.1f}%). This indicates a very sporadic development pattern.\n")
+            
+            if commit_burst_ratio > 0.5:
+                f.write(f"- **MAJOR ISSUE**: {max_commits_in_day} commits ({commit_burst_ratio*100:.1f}% of total) were made in a single day, suggesting a 'commit burst' rather than regular development.\n")
+            
+            if commits_per_week < 3:
+                f.write(f"- **ISSUE**: Commit frequency of {commits_per_week:.2f} per week is below the recommended minimum of 3 commits per week.\n")
+            
+            if largest_gap > 7:
+                f.write(f"- **ISSUE**: Maximum gap between commits ({largest_gap} days) exceeds the recommended maximum of 7 days.\n")
+            
+            if days_with_commits / max(1, project_duration) >= 0.4 and commits_per_week >= 3:
+                f.write("- **POSITIVE**: Regular commit pattern observed with consistent activity across the development period.\n")
+            
+            if 0.1 <= commit_burst_ratio <= 0.3 and commit_day_ratio >= 0.3:
+                f.write("- **POSITIVE**: Balanced distribution of commits with no excessive concentration on a single day.\n")
+            
+            f.write("\n**Rubric criteria:**\n\n")
             f.write("| Performance Level | Description | Points |\n")
             f.write("|-------------------|-------------|--------|\n")
             f.write("| Distinction (75-100%) | Optimal commit frequency with logical development progression | 2.25-3 |\n")
@@ -844,6 +974,39 @@ class GitRepoAnalyzer:
             f.write("### Quality of Commit Messages (4%)\n\n")
             f.write(f"**Performance Level:** {cm_performance}\n\n")
             f.write(f"**Points:** {cm_points}/4\n\n")
+            
+            # Add observations about commit messages
+            f.write("**Observations:**\n\n")
+            quality_breakdown = message_analysis.get('quality_breakdown', {})
+            avg_msg_length = message_analysis.get('average_length', 0)
+            
+            f.write(f"- Average commit message length: {avg_msg_length:.1f} characters\n")
+            f.write("- Message quality breakdown:\n")
+            for quality, count in quality_breakdown.items():
+                percentage = (count / message_analysis.get('total_commits', 1)) * 100
+                f.write(f"  - {quality.capitalize()}: {count} ({percentage:.1f}%)\n")
+            
+            top_words = message_analysis.get('top_words', [])
+            if top_words:
+                f.write("\n- Most common descriptive words in commit messages:\n")
+                for word, count in top_words[:5]:
+                    f.write(f"  - '{word}': used {count} times\n")
+            
+            f.write("\n**Assessment:**\n\n")
+            
+            if quality_breakdown.get('excellent', 0) / max(1, total_commits) >= 0.7:
+                f.write("- **POSITIVE**: Majority of commit messages are excellent, showing detailed descriptions of changes.\n")
+            
+            if quality_breakdown.get('poor', 0) > 0:
+                poor_percentage = quality_breakdown.get('poor', 0) / max(1, total_commits) * 100
+                f.write(f"- **ISSUE**: {poor_percentage:.1f}% of commit messages are poor quality, lacking descriptive content.\n")
+            
+            if avg_msg_length < 10:
+                f.write("- **ISSUE**: Average commit message length is too short. Messages should be descriptive of the changes.\n")
+            elif avg_msg_length > 100:
+                f.write("- **POSITIVE**: Commit messages are detailed with good explanations of changes.\n")
+            
+            f.write("\n**Rubric criteria:**\n\n")
             f.write("| Performance Level | Description | Points |\n")
             f.write("|-------------------|-------------|--------|\n")
             f.write("| Distinction (75-100%) | Comprehensive, well-structured messages following best practices | 3-4 |\n")
@@ -856,6 +1019,36 @@ class GitRepoAnalyzer:
             f.write("### Repository Organisation (3%)\n\n")
             f.write(f"**Performance Level:** {ro_performance}\n\n")
             f.write(f"**Points:** {ro_points}/3\n\n")
+            
+            # Add observations about repository organization
+            f.write("**Observations:**\n\n")
+            f.write(f"- README exists: {'Yes' if organization_analysis.get('readme_exists', False) else 'No'}\n")
+            f.write(f"- .gitignore exists: {'Yes' if organization_analysis.get('gitignore_exists', False) else 'No'}\n")
+            f.write(f"- Number of branches: {organization_analysis.get('branch_count', 0)}\n")
+            f.write(f"- Number of top-level directories: {len(organization_analysis.get('top_level_directories', []))}\n")
+            f.write(f"- Top-level directories: {', '.join(organization_analysis.get('top_level_directories', []))}\n\n")
+            
+            f.write("**Assessment:**\n\n")
+            
+            if not organization_analysis.get('readme_exists', False):
+                f.write("- **ISSUE**: README file is missing. A README is essential for explaining the project purpose and setup.\n")
+            else:
+                f.write("- **POSITIVE**: Repository includes a README file.\n")
+            
+            if not organization_analysis.get('gitignore_exists', False):
+                f.write("- **ISSUE**: .gitignore file is missing. A .gitignore helps prevent unwanted files from being committed.\n")
+            else:
+                f.write("- **POSITIVE**: Repository includes a .gitignore file.\n")
+            
+            branch_count = organization_analysis.get('branch_count', 0)
+            if branch_count < 2:
+                f.write("- **ISSUE**: Repository uses only one branch. Multiple branches (e.g., main/development) are recommended.\n")
+            elif branch_count >= 3:
+                f.write(f"- **POSITIVE**: Repository utilizes {branch_count} branches, indicating a good branching strategy.\n")
+            else:
+                f.write("- **POSITIVE**: Repository uses multiple branches.\n")
+            
+            f.write("\n**Rubric criteria:**\n\n")
             f.write("| Performance Level | Description | Points |\n")
             f.write("|-------------------|-------------|--------|\n")
             f.write("| Distinction (75-100%) | Professional-level organisation with optimal structure and branch strategy | 2.25-3 |\n")
@@ -866,223 +1059,130 @@ class GitRepoAnalyzer:
             # Total version control score
             total_points = cf_points + cm_points + ro_points
             total_percentage = (total_points / 10) * 100
-            f.write(f"### Total Version Control Score\n\n")
+            f.write("### Total Version Control Score\n\n")
             f.write(f"**Total Points:** {total_points:.2f}/10 ({total_percentage:.1f}%)\n\n")
             
-            # Commit Message Analysis
-            f.write("## Commit Message Analysis\n\n")
-            f.write(f"- **Total Commits:** {message_analysis.get('total_commits', 0)}\n")
-            f.write(f"- **Average Message Length:** {message_analysis.get('average_length', 0):.1f} characters\n")
-            f.write(f"- **Message Quality Distribution:**\n")
+            # Performance level
+            overall_performance = "Fail (0-49%)"
+            if total_percentage >= 75:
+                overall_performance = "Distinction (75-100%)"
+            elif total_percentage >= 65:
+                overall_performance = "Credit (65-74%)"
+            elif total_percentage >= 50:
+                overall_performance = "Pass (50-64%)"
             
-            for level, count in message_analysis.get('quality_breakdown', {}).items():
-                percentage = count / message_analysis.get('total_commits', 1) * 100
-                f.write(f"  - {level.capitalize()}: {count} ({percentage:.1f}%)\n")
+            f.write(f"**Overall Performance Level:** {overall_performance}\n\n")
             
-            # Add top words
-            top_words = message_analysis.get('top_words', [])
-            if top_words:
-                f.write("\n**Most Common Words in Commit Messages:**\n\n")
-                for word, count in top_words[:5]:
-                    f.write(f"- {word}: {count} occurrences\n")
+            # Recommendations for improvement
+            f.write("## Recommendations for Improvement\n\n")
             
-            # Commit Frequency Analysis
-            f.write("\n## Commit Frequency Analysis\n\n")
-            f.write(f"- **Average Commits Per Week:** {frequency_analysis.get('commits_per_week', 0):.1f}\n")
-            f.write(f"- **Largest Gap Between Commits:** {frequency_analysis.get('largest_gap', 0)} days\n")
-            
-            # Add daily stats
-            daily_stats = frequency_analysis.get('daily_stats', {})
-            if daily_stats:
-                f.write(f"- **Daily Commit Statistics:**\n")
-                f.write(f"  - Mean: {daily_stats.get('mean', 0):.2f} commits/day\n")
-                f.write(f"  - Median: {daily_stats.get('median', 0):.2f} commits/day\n")
-                f.write(f"  - Standard Deviation: {daily_stats.get('std_dev', 0):.2f}\n")
-            
-            # Add distribution info
-            std_dev_ratio = frequency_analysis.get('std_dev_ratio', 0)
-            f.write(f"- **Commit Distribution Evenness:** {std_dev_ratio:.2f} (lower is better)\n")
-            
-            # Add contributor info
-            contributors = message_analysis.get('unique_contributors', [])
-            if contributors:
-                f.write(f"- **Contributors:** {', '.join(contributors)}\n")
-            
-            # Repository Organization Analysis
-            f.write("\n## Repository Organization Analysis\n\n")
-            
-            # Add README, LICENSE, .gitignore presence
-            readme_exists = organization_analysis.get('readme_exists', False)
-            license_exists = organization_analysis.get('license_exists', False)
-            gitignore_exists = organization_analysis.get('gitignore_exists', False)
-            
-            f.write(f"- **README File:** {'Present' if readme_exists else 'Missing'}\n")
-            f.write(f"- **LICENSE File:** {'Present' if license_exists else 'Missing'}\n")
-            f.write(f"- **.gitignore File:** {'Present' if gitignore_exists else 'Missing'}\n")
-            
-            # Add repository structure
-            f.write(f"- **File Count:** {organization_analysis.get('file_count', 0)}\n")
-            f.write(f"- **Directory Count:** {organization_analysis.get('directory_count', 0)}\n")
-            
-            # Add top-level directories
-            top_dirs = organization_analysis.get('top_level_directories', [])
-            if top_dirs:
-                f.write(f"- **Top-Level Directories ({len(top_dirs)}):**\n")
-                for directory in sorted(top_dirs):
-                    f.write(f"  - {directory}\n")
-            
-            # Add branch information
-            branch_count = organization_analysis.get('branch_count', 0)
-            f.write(f"- **Branch Count:** {branch_count}\n")
-            
-            # Strengths and Recommendations
-            f.write("\n## Strengths and Recommendations\n\n")
-            
-            # Identify strengths
-            f.write("### Strengths\n\n")
-            strengths = []
-            
-            if message_score >= 7:
-                strengths.append("Good quality commit messages with descriptive content")
-            
-            if frequency_score >= 7:
-                strengths.append("Regular commit frequency with good distribution")
-            
-            if organization_score >= 7:
-                strengths.append("Well-organized repository structure")
-            
-            if len(message_analysis.get('unique_contributors', [])) > 1:
-                strengths.append("Multiple contributors showing good collaboration")
-            
-            if branch_count > 1:
-                strengths.append("Multiple branches showing good version control practice")
-            
-            if readme_exists:
-                strengths.append("README file present providing project documentation")
-            
-            if gitignore_exists:
-                strengths.append(".gitignore file present to exclude unwanted files")
-            
-            if not strengths:
-                strengths.append("Repository exists and is using Git for version control")
-            
-            for strength in strengths:
-                f.write(f"- {strength}\n")
-            
-            # Identify recommendations
-            f.write("\n### Recommendations\n\n")
-            recommendations = []
+            if frequency_score < 5:
+                f.write("### Commit Frequency and Distribution\n\n")
+                f.write("1. **Commit regularly** throughout the development process, not just at the end.\n")
+                f.write("2. **Aim for at least 3-4 commits per week** during active development.\n")
+                f.write("3. **Make smaller, focused commits** rather than large batches of changes.\n")
+                f.write("4. **Avoid gaps** of more than a week between commits.\n\n")
             
             if message_score < 7:
-                recommendations.append("Improve commit message quality by providing more descriptive content and following a consistent format")
-            
-            if frequency_score < 7:
-                recommendations.append("Commit more frequently and maintain a more consistent commit schedule")
-            
-            if frequency_analysis.get('largest_gap', 0) > 7:
-                recommendations.append(f"Reduce the gap between commits (current maximum: {frequency_analysis.get('largest_gap', 0)} days)")
+                f.write("### Commit Message Quality\n\n")
+                f.write("1. **Write descriptive commit messages** that explain what changes were made and why.\n")
+                f.write("2. **Follow the format**: Short title (50-72 characters) + detailed body when needed.\n")
+                f.write("3. **Use imperative mood** for commit titles (e.g., \"Add feature\" not \"Added feature\").\n")
+                f.write("4. **Reference issue numbers** where applicable.\n\n")
             
             if organization_score < 7:
-                recommendations.append("Improve repository organization with a more logical structure")
+                f.write("### Repository Organization\n\n")
+                f.write("1. **Create a comprehensive README** explaining the project purpose, setup, and usage.\n")
+                f.write("2. **Add a .gitignore file** to exclude unwanted files (compiled code, dependencies, etc.).\n")
+                f.write("3. **Use a branching strategy**: At minimum, maintain separate main and development branches.\n")
+                f.write("4. **Organize files logically** with a clear directory structure.\n\n")
             
-            if len(message_analysis.get('unique_contributors', [])) == 1:
-                recommendations.append("Involve more contributors for better collaboration")
-            
-            if branch_count <= 1:
-                recommendations.append("Use branches for feature development and experimentation")
-            
-            if not readme_exists:
-                recommendations.append("Add a README file to document the project")
-            
-            if not gitignore_exists:
-                recommendations.append("Add a .gitignore file to exclude unwanted files")
-            
-            if not recommendations:
-                recommendations.append("Continue maintaining good version control practices")
-            
-            for recommendation in recommendations:
-                f.write(f"- {recommendation}\n")
-            
-            # Include links to generated graphs
-            f.write("\n## Analysis Graphs\n\n")
-            
-            frequency_plot_path = os.path.join(self.output_dir, 'commit_frequency.png')
-            if os.path.exists(frequency_plot_path):
-                rel_path = os.path.basename(frequency_plot_path)
-                f.write(f"![Commit Frequency]({rel_path})\n\n")
-            
-            quality_plot_path = os.path.join(self.output_dir, 'message_quality.png')
-            if os.path.exists(quality_plot_path):
-                rel_path = os.path.basename(quality_plot_path)
-                f.write(f"![Message Quality Distribution]({rel_path})\n\n")
-            
-            author_plot_path = os.path.join(self.output_dir, 'commits_by_author.png')
-            if os.path.exists(author_plot_path):
-                rel_path = os.path.basename(author_plot_path)
-                f.write(f"![Commits by Author]({rel_path})\n\n")
+            f.write("## Academic Integrity Statement\n\n")
+            f.write("This report is automatically generated based on Git history analysis and provides an objective assessment of version control practices. Scores are mapped to rubric criteria as defined in the assignment specification.\n")
         
         print(f"Summary report saved to {summary_path}")
-    
-    def _score_to_level(self, score):
-        """Convert a score to a quality level."""
-        if score >= 8.5:
-            return "Excellent"
-        elif score >= 7:
-            return "Good"
-        elif score >= 5:
-            return "Satisfactory"
-        else:
-            return "Needs Improvement"
-    
-    def _map_to_rubric(self, score, max_points):
-        """
-        Map a score (0-10) to the rubric scale.
         
-        Args:
-            score: Score on a 0-10 scale
-            max_points: Maximum points for this category
-            
-        Returns:
-            Tuple of (performance_level, points)
-        """
-        if score >= 8.5:
-            performance = "Distinction (75-100%)"
-            percentage = min(100, 75 + (score - 8.5) * 25 / 1.5)
-            points = max_points * percentage / 100
-        elif score >= 7:
-            performance = "Credit (65-74%)"
-            percentage = 65 + (score - 7) * 9 / 1.5
-            points = max_points * percentage / 100
-        elif score >= 5:
-            performance = "Pass (50-64%)"
-            percentage = 50 + (score - 5) * 14 / 2
-            points = max_points * percentage / 100
-        else:
-            performance = "Fail (0-49%)"
-            percentage = score * 49 / 5
-            points = max_points * percentage / 100
-        
-        return (performance, round(points, 2))
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Analyze Git repository development process')
-    parser.add_argument('repo_path', help='Path to the Git repository')
-    parser.add_argument('--output', '-o', default='git_analysis_reports', help='Output directory for reports')
-    
+    parser = argparse.ArgumentParser(description="Analyze a Git repository for quality metrics.")
+    parser.add_argument("repo_path", help="Path to the Git repository to analyze")
+    parser.add_argument("--output", required=False, default="git_analysis_reports", 
+                      help="Directory to save analysis reports")
     args = parser.parse_args()
     
+    # Create analyzer instance
     analyzer = GitRepoAnalyzer(args.repo_path, args.output)
     
-    if not analyzer.is_git_repo:
-        print(f"Error: {args.repo_path} is not a valid Git repository")
-        sys.exit(1)
+    # Run the analysis
+    analysis_results = analyzer.analyze_repository()
     
-    print(f"Analyzing Git repository: {args.repo_path}")
-    analyzer.analyze_repository()
-    
-    print("Git repository analysis complete!")
-
-
-
-
+    # Print basic info to stdout for command-line feedback
+    if 'error' in analysis_results:
+        print(f"Error analyzing repository: {analysis_results['error']}")
+    else:
+        print(f"\nGit Repository Analysis Summary")
+        print(f"Repository: {os.path.basename(args.repo_path)}")
+        
+        message_analysis = analysis_results.get('message_analysis', {})
+        frequency_analysis = analysis_results.get('frequency_analysis', {})
+        organization_analysis = analysis_results.get('organization_analysis', {})
+        
+        print(f"\nTotal Commits: {message_analysis.get('total_commits', 0)}")
+        print(f"Unique Contributors: {len(message_analysis.get('unique_contributors', []))}")
+        print(f"Branches: {len(analysis_results.get('branches', []))}")
+        
+        # Calculate overall scores based on rubric criteria
+        message_score = message_analysis.get('quality_score', 0)
+        frequency_score = frequency_analysis.get('frequency_score', 0)
+        organization_score = organization_analysis.get('organization_score', 0)
+        
+        # Weight the scores based on the assignment rubric
+        # Version Control (10%): Commit frequency (3%), Commit messages (4%), Repo organization (3%)
+        commit_message_weight = 0.4  # 40% of version control score (4% of total)
+        commit_frequency_weight = 0.3  # 30% of version control score (3% of total)
+        repo_organization_weight = 0.3  # 30% of version control score (3% of total)
+        
+        weighted_score = (
+            message_score * commit_message_weight +
+            frequency_score * commit_frequency_weight +
+            organization_score * repo_organization_weight
+        )
+        
+        # Map to performance levels
+        performance_level = "Fail (0-49%)"
+        if weighted_score >= 7.5:
+            performance_level = "Distinction (75-100%)"
+        elif weighted_score >= 6.5:
+            performance_level = "Credit (65-74%)"
+        elif weighted_score >= 5.0:
+            performance_level = "Pass (50-64%)"
+        
+        # Calculate percentage
+        percentage = (weighted_score / 10) * 100
+        
+        print(f"\nScores (0-10 scale):")
+        print(f"Commit Message Quality: {message_score:.2f}")
+        print(f"Commit Frequency: {frequency_score:.2f}")
+        print(f"Repository Organization: {organization_score:.2f}")
+        print(f"Overall Version Control Score: {weighted_score:.2f}/10 ({percentage:.1f}%)")
+        print(f"Performance Level: {performance_level}")
+        
+        # Points based on total weight (10% of assignment)
+        points = weighted_score
+        print(f"Points: {points:.2f}/10 ({percentage:.1f}%)")
+        
+        print(f"\nDetailed reports saved to: {args.output}/")
+        
+        # Additional version control metrics specifically for assignment requirements
+        commits_per_week = frequency_analysis.get('commits_per_week', 0)
+        largest_gap = frequency_analysis.get('largest_gap', 0)
+        
+        print("\nKey Version Control Metrics:")
+        print(f"Commits per Week: {commits_per_week:.2f}")
+        print(f"Largest Gap Between Commits (days): {largest_gap}")
+        
+        # Commit message quality breakdown
+        quality_breakdown = message_analysis.get('quality_breakdown', {})
+        print("\nCommit Message Quality Distribution:")
+        for quality, count in quality_breakdown.items():
+            percentage = (count / message_analysis.get('total_commits', 1)) * 100
+            print(f"- {quality.capitalize()}: {count} ({percentage:.1f}%)")

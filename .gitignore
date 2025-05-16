@@ -179,3 +179,5 @@ lighthouserc.js # Temporary config file
 ehthumbs.db
 Thumbs.db
 
+master_assessment_reports/*
+submissions/*
