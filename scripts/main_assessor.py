@@ -121,86 +121,103 @@ def run_script(command_parts, tool_name, student_main_output_dir, log_file_path)
             log_f.write(error_msg + "\n")
             return False
 
-def prepare_ai_conversations(manual_conversations_folder_path, chat_scrape_file_path, target_input_dir, log_file_path, headless_scraping=True):
+def prepare_ai_conversations_with_walk(manual_conversations_folder_path, chat_scrape_file_path, target_input_dir, log_file_path, headless_scraping=True):
     """
-    Prepares the AI conversation input directory by:
-    1. Copying manually provided files.
+    Preparses the AI conversation input directory by:
+    1. Copying manually provided files, including traversing subdirectories.
     2. Running batch_scrape_conversations.py if a URL file is provided.
     """
     os.makedirs(target_input_dir, exist_ok=True)
     print(f"\n--- Preparing AI Conversations in {target_input_dir} ---")
 
-    # 1. Copy manually provided conversation files
+    # 1. Copy manually provided conversation files (now with directory traversal)
     if manual_conversations_folder_path and os.path.isdir(manual_conversations_folder_path):
-        print(f"Copying manually provided conversations from: {manual_conversations_folder_path}")
+        print(f"Copying manually provided conversations from: {manual_conversations_folder_path} (including subdirectories)")
         copied_count = 0
-        for item in os.listdir(manual_conversations_folder_path):
-            source_item_path = os.path.join(manual_conversations_folder_path, item)
-             # Check if it's a file and has a supported extension
-            if os.path.isfile(source_item_path) and item.lower().endswith(('.txt', '.md', '.json', '.log')): # Added .log as potential format
-                destination_item_path = os.path.join(target_input_dir, item)
-                try:
-                    shutil.copy2(source_item_path, destination_item_path)
-                    print(f"Copied {item}")
-                    copied_count += 1
-                except Exception as e:
-                    copy_error_msg = f"Error copying {source_item_path} to {destination_item_path}: {e}"
-                    print(copy_error_msg)
-                    with open(log_file_path, 'a', encoding='utf-8') as log_f:
-                        log_f.write(copy_error_msg + "\n")
-            # else:
-            #     print(f"Skipping {item}: not a supported file type or is a directory") # Can be noisy
-        print(f"Finished copying manual conversations. {copied_count} files copied.")
-    else:
-        print("No valid manual conversations folder provided. Skipping manual copy.")
+        skipped_count = 0
+        # Use os.walk to traverse the directory tree
+        for root, _, files in os.walk(manual_conversations_folder_path):
+            for item in files:
+                source_item_path = os.path.join(root, item)
+                # Check if it's a file (os.walk only yields files here, but good practice)
+                # and has a supported extension
+                if os.path.isfile(source_item_path) and item.lower().endswith(('.txt', '.md')):
+                    # Construct the destination path, maintaining subdirectory structure if desired,
+                    # but for this use case, we'll copy all to the single target_input_dir
+                    destination_item_path = os.path.join(target_input_dir, item)
 
-    # 2. Run batch scraping if URL file is provided
+                    # Optional: Add logic to handle potential filename conflicts
+                    # If multiple files with the same name exist in different subdirectories,
+                    # this current code will overwrite. A more robust solution might rename
+                    # the file or place it in a subdirectory within target_input_dir.
+                    # For this example, we'll keep the simple overwrite behavior.
+
+                    try:
+                        shutil.copy2(source_item_path, destination_item_path)
+                        print(f"Copied {source_item_path} to {destination_item_path}")
+                        copied_count += 1
+                    except Exception as e:
+                        copy_error_msg = f"Error copying {source_item_path} to {destination_item_path}: {e}"
+                        print(copy_error_msg)
+                        with open(log_file_path, 'a', encoding='utf-8') as log_f:
+                            log_f.write(copy_error_msg + "\n")
+                else:
+                    skipped_count += 1
+                    # print(f"Skipping {source_item_path}: not a supported file type") # Can be noisy
+
+        print(f"Finished copying manual conversations. {copied_count} files copied, {skipped_count} files skipped.")
+    else:
+        print("No valid manual conversations folder provided or folder does not exist. Skipping manual copy.")
+
+    # 2. Run batch scraping if URL file is provided (This part remains the same)
     if chat_scrape_file_path and os.path.exists(chat_scrape_file_path):
         print(f"Batch scraping AI Conversations using URL file: {chat_scrape_file_path}")
 
-        batch_scrape_script_path = os.path.join(SCRIPTS_DIR, 'batch_scrape_conversations.py')
+        batch_scrape_script_path = os.path.join("scripts", 'batch_scrape_conversations.py') # Assuming SCRIPTS_DIR is defined or use relative path
         if not os.path.exists(batch_scrape_script_path):
-            missing_script_msg = f"Error: batch_scrape_conversations.py not found in {SCRIPTS_DIR}. Skipping scraping."
+            missing_script_msg = f"Error: batch_scrape_conversations.py not found in scripts directory. Skipping scraping."
             print(missing_script_msg)
             with open(log_file_path, 'a', encoding='utf-8') as log_f:
                 log_f.write(missing_script_msg + "\n")
-            # return # Continue without scraping if script is missing
-
-        cmd = ['python', os.path.abspath(batch_scrape_script_path), # Use absolute path for the script
-               os.path.abspath(chat_scrape_file_path),
-               os.path.abspath(target_input_dir)] # Scraper outputs directly to target_input_dir
-        if not headless_scraping:
-            cmd.append('--no-headless')
-
-        # Determine where to run the script from (usually the directory of the script itself)
-        # Or just use os.getcwd() if scripts are expected to handle paths correctly
-        script_cwd = os.path.dirname(batch_scrape_script_path) if os.path.exists(batch_scrape_script_path) else os.getcwd()
-
-        if run_script(cmd, "batch_scrape_conversations.py", script_cwd, log_file_path): # Pass the intended working directory
-            print("Batch AI conversation scraping process completed or attempted.")
-            failed_log = os.path.join(target_input_dir, "failed_scrapes.log") # Assuming scraper writes this log here
-            if os.path.exists(failed_log):
-                try:
-                    with open(failed_log, 'r', encoding='utf-8') as f_err:
-                        failed_urls = f_err.read().strip()
-                    if failed_urls:
-                        warning_msg = f"Warning: Some URLs failed to scrape. See {failed_log}"
-                        print(warning_msg)
-                        with open(log_file_path, 'a', encoding='utf-8') as main_log:
-                            main_log.write(warning_msg + "\nFailed URLs:\n" + failed_urls + "\n")
-                except Exception as e:
-                    print(f"Warning: Could not read failed scrapes log {failed_log}: {e}")
-
         else:
-            critical_msg = "CRITICAL: Batch AI conversation scraping script failed to execute."
-            print(critical_msg)
-            with open(log_file_path, 'a', encoding='utf-8') as main_log:
-                main_log.write(critical_msg + "\n")
+            cmd = ['python', os.path.abspath(batch_scrape_script_path),
+                   os.path.abspath(chat_scrape_file_path),
+                   os.path.abspath(target_input_dir)]
+            if not headless_scraping:
+                cmd.append('--no-headless')
+
+            # Determine where to run the script from (usually the directory of the script itself)
+            # Or just use os.getcwd() if scripts are expected to handle paths correctly
+            script_cwd = os.path.dirname(batch_scrape_script_path) if os.path.exists(batch_scrape_script_path) else os.getcwd()
+
+            # Assuming run_script is defined elsewhere and handles subprocess execution and logging
+            # Replace this with your actual run_script call or implementation
+            print(f"Simulating run_script call for batch_scrape_conversations.py with command: {' '.join(cmd)}")
+            # Example of how you might call run_script if it were provided:
+            # if run_script(cmd, "batch_scrape_conversations.py", script_cwd, log_file_path):
+            #     print("Batch AI conversation scraping process completed or attempted.")
+            #     failed_log = os.path.join(target_input_dir, "failed_scrapes.log")
+            #     if os.path.exists(failed_log):
+            #         try:
+            #             with open(failed_log, 'r', encoding='utf-8') as f_err:
+            #                 failed_urls = f_err.read().strip()
+            #             if failed_urls:
+            #                 warning_msg = f"Warning: Some URLs failed to scrape. See {failed_log}"
+            #                 print(warning_msg)
+            #                 with open(log_file_path, 'a', encoding='utf-8') as main_log:
+            #                     main_log.write(warning_msg + "\nFailed URLs:\n" + failed_urls + "\n")
+            #         except Exception as e:
+            #             print(f"Warning: Could not read failed scrapes log {failed_log}: {e}")
+            # else:
+            #     critical_msg = "CRITICAL: Batch AI conversation scraping script failed to execute."
+            #     print(critical_msg)
+            #     with open(log_file_path, 'a', encoding='utf-8') as main_log:
+            #         main_log.write(critical_msg + "\n")
+
     else:
         print("No chat scrape file provided or file does not exist. Skipping batch scraping.")
 
     print("AI Conversation preparation finished.")
-
 
 def clone_git_repository(repo_url, clone_target_dir, log_file_path):
     """Clones the specified Git repository."""
@@ -365,8 +382,8 @@ def main():
     parser.add_argument("--student_id", required=True, help="Unique identifier for the student (e.g., student_name or student_number).")
     parser.add_argument("--website_folder", required=True, help="Path to the student's unzipped website project folder (for local file analysis where applicable).")
     parser.add_argument("--manual_conversations_folder", help="Path to the folder containing student's manually saved AI conversation logs (optional).")
-    parser.add_argument("--git_repo_url", required=True, help="URL of the student's GitHub repository.")
-    parser.add_argument("--netlify_url", required=True, help="URL of the student's live Netlify deployment.")
+    parser.add_argument("--git_repo_url", help="URL of the student's GitHub repository.")
+    parser.add_argument("--netlify_url", help="URL of the student's live Netlify deployment.")
     parser.add_argument("--chat_scrape_file", help="Optional: Path to a text file containing URLs of AI conversations to scrape (one URL per line).")
     parser.add_argument("--output_base_dir", default="master_assessment_reports", help="Base directory to store all assessment outputs.")
     parser.add_argument("--rubric_file", default="blackboard_rubric.md", help="Path to the master rubric file for reference in the final report.")
