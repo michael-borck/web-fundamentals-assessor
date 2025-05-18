@@ -430,16 +430,14 @@ def process_student(student_id, base_dir, simplified=False, ascii_format=False):
 
     results = extract_results_from_report(file_path)
 
-    # Simplified argument is no longer used to change content, only filename suffix
     if ascii_format:
         table_content = create_ascii_table(results, student_id)
-        suffix = "_ascii_minimal" # Updated suffix
     else:
-        table_content = create_markdown_table(results, student_id) # Pass simplified=False as it's the default
-        suffix = "_markdown_minimal" # Updated suffix
+        table_content = create_markdown_table(results, student_id)
 
+    # Always use 'results.txt' as output file name
+    output_file = Path(f"{base_dir}/{student_id}/results.txt")
 
-    output_file = Path(f"{base_dir}/{student_id}/{student_id}_results_table{suffix}.md")
     with open(output_file, 'w', encoding='utf-8') as file:
         file.write(table_content)
 

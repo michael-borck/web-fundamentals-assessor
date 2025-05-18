@@ -48,12 +48,12 @@ python scripts/process_assessments.py \
 ##
 ## 3) Post-processing — extract results tables for all students
 ##
-echo "→ Post-processing: extracting results…"
-python scripts/extract_results.py \
-    --all \
-    --simplified \
-    --ascii \
-    --base-dir "$RESULTS_BASE_DIR"
+#echo "→ Post-processing: extracting results…"
+#python scripts/extract_results.py \
+    #--all \
+    #--simplified \
+    #--ascii \
+    #--base-dir "$RESULTS_BASE_DIR"
 
 echo "✅ All steps complete."
 

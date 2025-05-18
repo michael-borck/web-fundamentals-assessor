@@ -1,4 +1,7 @@
-SUBMISSIONS_DIR="submissions"
+#!/usr/bin/env bash
+set -euo pipefail
+
+SUBMISSIONS_DIR="master_assessment_reports"
 
 for d in "$SUBMISSIONS_DIR"/*/; do
   student_dir="${d%/}"
