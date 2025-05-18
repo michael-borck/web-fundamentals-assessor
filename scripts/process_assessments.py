@@ -23,27 +23,36 @@ def build_and_run(row, args):
     cmd = ['python', args.main_script,
            '--student_id', student]
 
+    # Construct the base path to the student's submission directory within the submissions folder
+    student_submission_path = os.path.join(args.submissions_folder, student)
+
     # Determine website folder
-    if github.lower() != 'none':
+    #if github.lower() != 'none':
         # Use GitHub repo folder when URL is provided
-        repo_folder = extract_repo_folder(github)
-        website_folder = os.path.join(student, repo_folder)
+        #repo_folder = extract_repo_folder(github)
+        #website_folder = os.path.join(student_submission_path, repo_folder)
+    #else:
+        # No GitHub URL: list directories under student's submission path and exclude manual conversations folder
+    try:
+        all_dirs = [d for d in os.listdir(student_submission_path)
+                    if os.path.isdir(os.path.join(student_submission_path, d))]
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Student submission directory not found: {student_submission_path}")
+
+
+    exclude = args.manual_folder_name
+    candidates = [d for d in all_dirs if d != exclude]
+    if len(candidates) == 1:
+        # Construct the full path to the website folder
+        website_folder = os.path.join(student_submission_path, candidates[0])
     else:
-        # No GitHub URL: list directories under student/ and exclude manual conversations folder
-        all_dirs = [d for d in os.listdir(student)
-                    if os.path.isdir(os.path.join(student, d))]
-        exclude = args.manual_folder_name
-        candidates = [d for d in all_dirs if d != exclude]
-        if len(candidates) == 1:
-            website_folder = os.path.join(student, candidates[0])
-        else:
-            raise ValueError(
-                f"Could not determine website folder for student {student}. Found: {candidates}"
-            )
+        raise ValueError(
+            f"Could not determine website folder for student {student}. Found: {candidates}"
+        )
     cmd += ['--website_folder', website_folder]
 
     # Manual conversations folder (e.g., 'conversations' or 'ai-conversations')
-    manual_folder = os.path.join(student, args.manual_folder_name)
+    manual_folder = os.path.join(student_submission_path, args.manual_folder_name)
     cmd += ['--manual_conversations_folder', manual_folder]
 
     # Include Git and Netlify URLs if available
@@ -70,6 +79,9 @@ def main():
     parser.add_argument('--manual-folder-name',
                         default='ai-conversations',
                         help="Name of the manual conversations subfolder")
+    parser.add_argument('--submissions-folder',
+                        required=True, # Make this argument required
+                        help="Path to the root directory containing student submission folders")
     parser.add_argument('--dry-run',
                         action='store_true',
                         help="If set, print commands without executing them")
@@ -85,5 +97,4 @@ def main():
 
 if __name__ == '__main__':
     main()
-
 

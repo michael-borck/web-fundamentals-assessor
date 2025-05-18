@@ -51,7 +51,7 @@ def main():
         for fname in files:
             file_path = root_path / fname
             process_file(file_path, output_dir)
-
+    print(f"Processed files from {os.path.basename(input_dir)}") 
 if __name__ == "__main__":
     main()
 

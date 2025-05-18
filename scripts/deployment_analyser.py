@@ -23,8 +23,10 @@ class DeploymentAnalyzer:
             netlify_url: URL to the Netlify deployment
             output_dir: Directory to save analysis reports
         """
-        self.github_repo_url = github_repo_url
-        self.netlify_url = netlify_url
+
+
+        self.github_repo_url = github_repo_url if github_repo_url else None
+        self.netlify_url = netlify_url if netlify_url else None
         self.output_dir = output_dir
         
         # Create output directory
@@ -36,36 +38,58 @@ class DeploymentAnalyzer:
         # GitHub API details
         self.github_api_base = "https://api.github.com"
         self.github_headers = {}
-        
-        # GitHub token (optional, increases rate limits)
-        github_token = os.environ.get("GITHUB_TOKEN")
-        if github_token:
-            self.github_headers["Authorization"] = f"token {github_token}"
+       
+        if self.github_repo_url: # Check if the URL exists before getting token
+            # GitHub token (optional, increases rate limits)
+            github_token = os.environ.get("GITHUB_TOKEN")
+            if github_token:
+                self.github_headers["Authorization"] = f"token {github_token}"
+        else:
+            print("Warning: No GitHub URL provided. GitHub API features will be skipped.")
+
         
         # Netlify deployment details
-        self.netlify_domain = urlparse(netlify_url).netloc
-        
+        # Netlify deployment details - Handle cases where Netlify URL is missing/invalid
+        self.netlify_domain = None
+        if self.netlify_url: # Check if Netlify URL exists before parsing
+             try:
+                 parsed_url = urlparse(self.netlify_url)
+                 self.netlify_domain = parsed_url.netloc
+                 if not self.netlify_domain:
+                      print(f"Warning: Could not extract domain from Netlify URL: {self.netlify_url}")
+             except Exception as e:
+                 print(f"Error parsing Netlify URL {self.netlify_url}: {e}")
+                 self.netlify_domain = None # Ensure it's None on error
+
+
+        if not self.netlify_domain:
+             print("Warning: No valid Netlify URL provided. Netlify features will be skipped.")
+
         # Initialize scoring criteria
         self.github_workflow_criteria = {
-            'has_workflow_files': True,         # Repository should have workflow files
-            'has_netlify_deploy': True,         # Should have Netlify deployment configuration
-            'build_steps_present': True,        # Should have build steps
-            'test_steps_present': False,        # Test steps are good but not always necessary
-            'conditional_deploy': True,         # Should deploy conditionally (e.g., on main branch)
-            'cache_dependencies': True          # Should cache dependencies for faster builds
+            'has_workflow_files': {"max_score": 2},         # Example max score
+            'has_netlify_deploy': {"max_score": 3},         # Example max score
+            'build_steps_present': {"max_score": 2},        # Example max score
+            'test_steps_present': {"max_score": 1},         # Example max score
+            'conditional_deploy': {"max_score": 1},         # Example max score
+            'cache_dependencies': {"max_score": 1}          # Example max score
         }
-        
+
         self.netlify_criteria = {
-            'site_loads': True,                 # Site should load successfully
-            'custom_domain': False,             # Custom domain is good but not required
-            'ssl_configured': True,             # HTTPS should be configured
-            'fast_load_time': 3.0,              # Maximum load time in seconds for "fast" rating
-            'passes_basic_seo': True,           # Basic SEO elements should be present
-            'responsive_design': True           # Site should be responsive
+            'site_loads': {"max_score": 3},                 # Example max score
+            'custom_domain': {"max_score": 1},              # Example max score
+            'ssl_configured': {"max_score": 2},             # Example max score
+            'fast_load_time': {"max_score": 2},             # Example max score (perhaps tiered scoring based on this max)
+            'passes_basic_seo': {"max_score": 1},           # Example max score
+            'responsive_design': {"max_score": 1}           # Example max score
         }
     
     def _extract_repo_info(self):
         """Extract repository owner and name from the GitHub URL."""
+        if not self.github_repo_url:
+            # print("Warning: No GitHub URL provided. Skipping repository info extraction.") # Already printed in __init__
+            return None, None # Return None, None immediately if no URL
+
         # Handle HTTPS GitHub URLs
         https_pattern = r"github\.com/([^/]+)/([^/]+)"
         https_match = re.search(https_pattern, self.github_repo_url)
@@ -85,7 +109,47 @@ class DeploymentAnalyzer:
             return ssh_match.group(1), repo_name
         
         raise ValueError("Invalid GitHub repository URL format. Use either HTTPS (https://github.com/owner/repo) or SSH (git@github.com:owner/repo) format.")
-    
+   
+    # Example helper method structure (implement the actual logic)
+    def _check_github_workflows(self):
+         """Checks for GitHub Actions workflow file and recent runs."""
+         print("Checking GitHub workflows...")
+         workflow_present = False
+         build_success = False
+         deployment_success = False
+
+         if not self.repo_owner or not self.repo_name:
+             print("Skipping GitHub workflow check: Missing repository info.")
+             return workflow_present, build_success, deployment_success # Return defaults
+
+         # Use GitHub API to check for workflow files in .github/workflows
+         # Use GitHub API to check recent workflow runs and their status
+
+         return workflow_present, build_success, deployment_success
+
+
+    # Example helper method structure (implement the actual logic)
+    def _check_netlify_status(self):
+        """Checks if the Netlify site is active."""
+        print("Checking Netlify site status...")
+        if not self.netlify_domain:
+            print("Skipping Netlify status check: Missing Netlify domain.")
+            return 0 # Return 0 if domain is missing
+
+        # Try to fetch the Netlify site URL and check response status code
+        try:
+            response = requests.get(f"https://{self.netlify_domain}", timeout=10) # Add timeout
+            if response.status_code == 200:
+                print("Netlify site is active.")
+                return 1 # Return 1 for active
+            else:
+                print(f"Netlify site returned status code: {response.status_code}")
+                return 0 # Return 0 for not active or error
+        except requests.exceptions.RequestException as e:
+            print(f"Error checking Netlify site status for {self.netlify_domain}: {e}")
+            return 0 # Return 0 on request error
+
+
     def get_repo_contents(self, path=""):
         """Get contents of a repository directory."""
         url = f"{self.github_api_base}/repos/{self.repo_owner}/{self.repo_name}/contents/{path}"
@@ -734,6 +798,33 @@ class DeploymentAnalyzer:
         Returns:
             Dictionary with analysis results
         """
+        # --- Assign zero score immediately if URLs are missing ---
+        # This is the main check for the "zero marks if no URL" rule
+        if not self.github_repo_url or not self.netlify_url:
+            print("Missing GitHub or Netlify URL. Assigning zero score for deployment.")
+            details_msg = "Missing GitHub or Netlify URL. Full deployment analysis skipped."
+            recommendations_msg = "Ensure both a valid GitHub repository URL and Netlify deployment URL are provided for a full assessment."
+
+            # Return a dictionary with all scores set to 0
+            total_max_score = sum(crit["max_score"] for crit_type in [self.github_workflow_criteria, self.netlify_criteria] for crit in crit_type.values())
+            points_earned = 0
+            percentage = (points_earned / total_max_score) * 100 if total_max_score > 0 else 0
+
+            return {
+                "github_workflow_score": 0,
+                "netlify_status_score": 0,
+                "build_settings_score": 0,
+                "custom_domain_score": 0,
+                "https_score": 0,
+                "redirects_score": 0,
+                "overall_score": 0, # Sum of scores before weighting
+                "performance_level": "Incomplete Submission - Missing URLs",
+                "points": points_earned,
+                "percentage": percentage,
+                "details": details_msg,
+                "recommendations": recommendations_msg
+            }
+
         # Get and analyze workflow files
         workflow_files = self.get_workflow_files()
         workflow_analysis = self.analyze_workflow_files(workflow_files)

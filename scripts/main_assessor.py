@@ -121,7 +121,7 @@ def run_script(command_parts, tool_name, student_main_output_dir, log_file_path)
             log_f.write(error_msg + "\n")
             return False
 
-def prepare_ai_conversations_with_walk(manual_conversations_folder_path, chat_scrape_file_path, target_input_dir, log_file_path, headless_scraping=True):
+def prepare_ai_conversations(manual_conversations_folder_path, chat_scrape_file_path, target_input_dir, log_file_path, headless_scraping=True):
     """
     Preparses the AI conversation input directory by:
     1. Copying manually provided files, including traversing subdirectories.
@@ -378,6 +378,7 @@ def aggregate_final_report(student_id, student_main_output_dir, dirs_config, fin
 
 
 def main():
+
     parser = argparse.ArgumentParser(description="Main Assessor for Web Fundamentals Projects.")
     parser.add_argument("--student_id", required=True, help="Unique identifier for the student (e.g., student_name or student_number).")
     parser.add_argument("--website_folder", required=True, help="Path to the student's unzipped website project folder (for local file analysis where applicable).")
@@ -392,7 +393,11 @@ def main():
     parser.set_defaults(headless_scraping=True)
 
     args = parser.parse_args()
-
+   
+    # --- Initialize git_repo_local_path ---
+    git_repo_local_path = None # Ensure this is initialized to None
+    # --- End Initialization ---
+    
     student_main_output_dir, dirs_config = setup_directories(args.output_base_dir, args.student_id)
     log_file_path = os.path.join(student_main_output_dir, "assessment_log.txt")
 
@@ -409,13 +414,14 @@ def main():
     prepare_ai_conversations(args.manual_conversations_folder, args.chat_scrape_file, conversation_input_dir, log_file_path, args.headless_scraping)
 
     # --- Clone Git Repository ---
-    git_repo_local_path = dirs_config["temp_git_repo"]
-    # Pass log_file_path to clone_git_repository
-    if not clone_git_repository(args.git_repo_url, git_repo_local_path, log_file_path):
-        print(f"CRITICAL: Failed to clone Git repository: {args.git_repo_url}. Git-dependent analyses will be affected.")
-        # Log this critical failure
-        with open(log_file_path, 'a', encoding='utf-8') as log_f:
-            log_f.write(f"CRITICAL: Failed to clone Git repository: {args.git_repo_url}. Git-dependent analyses will be affected.\n")
+    if args.git_repo_url:
+        git_repo_local_path = dirs_config["temp_git_repo"]
+        # Pass log_file_path to clone_git_repository
+        if not clone_git_repository(args.git_repo_url, git_repo_local_path, log_file_path):
+            print(f"CRITICAL: Failed to clone Git repository: {args.git_repo_url}. Git-dependent analyses will be affected.")
+            # Log this critical failure
+            with open(log_file_path, 'a', encoding='utf-8') as log_f:
+                log_f.write(f"CRITICAL: Failed to clone Git repository: {args.git_repo_url}. Git-dependent analyses will be affected.\n")
 
 
     # --- Run Screenshot tool ---
@@ -458,14 +464,21 @@ def main():
     run_script(conv_cmd, "conversation_analyser.py", student_main_output_dir, log_file_path)
 
     # Deployment Analyser
+
+    # Use ternary operator to provide empty string if URL is None, empty, or 'none'
+    github_url_for_cmd = args.git_repo_url if args.git_repo_url and args.git_repo_url.lower() != 'none' else ''
+    netlify_url_for_cmd = args.netlify_url if args.netlify_url and args.netlify_url.lower() != 'none' else ''
+
+
     dep_cmd = ['python', os.path.join(SCRIPTS_DIR, 'deployment_analyser.py'),
-               args.git_repo_url, args.netlify_url, # Uses both repo URL and Netlify URL
+               github_url_for_cmd, netlify_url_for_cmd, # Uses both repo URL and Netlify URL
                '--output', os.path.abspath(dirs_config["deployment_reports"])]
     run_script(dep_cmd, "deployment_analyser.py", student_main_output_dir, log_file_path)
 
     # Git Analyser - Only run if git clone was successful
     # Check for the .git directory as a robust indicator of a successful clone
-    if os.path.exists(os.path.join(git_repo_local_path, '.git')):
+    if git_repo_local_path is not None and os.path.exists(git_repo_local_path): # This is the correct check (likely line 479)
+        #if os.path.exists(os.path.join(git_repo_local_path, '.git')):
         git_cmd = ['python', os.path.join(SCRIPTS_DIR, 'git_analyser.py'),
                    os.path.abspath(git_repo_local_path), # Path to the cloned repository
                    '--output', os.path.abspath(dirs_config["git_reports"])]
@@ -476,16 +489,26 @@ def main():
         with open(log_file_path, 'a', encoding='utf-8') as log_f:
             log_f.write("Skipping Git analysis as repository was not cloned successfully or path is invalid.\n")
 
+    is_netlify_url_available = hasattr(args, 'netlify_url') and args.netlify_url and args.netlify_url.lower() != 'none'
 
-    # Performance Analyser - Using the Netlify URL
-    perf_cmd = ['python', os.path.join(SCRIPTS_DIR, 'performance_analyser.py'),
+    if is_netlify_url_available:
+        # If a valid Netlify URL IS available, build and run the command.
+        print("\n--- Running performance_analyser.py ---")
+        # Performance Analyser - Using the Netlify URL
+        perf_cmd = ['python', os.path.join(SCRIPTS_DIR, 'performance_analyser.py'),
                 '--url', netlify_url, # Use the --url argument with the Netlify URL
                 '--output', os.path.abspath(dirs_config["performance_reports"])]
-    # Add chrome-path if provided in the main script arguments
-    if args.chrome_path:
-        perf_cmd.extend(['--chrome-path', args.chrome_path])
-    # Note: --parallel and --use-ci are generally not applicable or ignored by performance_analyser.py when testing a single URL
-    run_script(perf_cmd, "performance_analyser.py", student_main_output_dir, log_file_path)
+        # Add chrome-path if provided in the main script arguments
+        if args.chrome_path:
+            perf_cmd.extend(['--chrome-path', args.chrome_path])
+        # Note: --parallel and --use-ci are generally not applicable or ignored by performance_analyser.py when testing a single URL
+        run_script(perf_cmd, "performance_analyser.py", student_main_output_dir, log_file_path)
+    else:
+        # If Netlify URL is NOT available or valid, skip the tool completely.
+        print("\n--- Skipping performance_analyser.py: Netlify URL not available or valid. ---")
+        # You might want to log this skip event as well
+        # with open(log_file_path, 'a', encoding='utf-8') as log_f:
+        #     log_f.write("Skipping performance_analyser.py: Netlify URL not available.\\n")
 
 
     # Responsive Analyser
@@ -512,7 +535,8 @@ def main():
     # --- Cleanup (Optional) ---
     try:
         # Ensure git_repo_local_path is defined before attempting to remove
-        if 'git_repo_local_path' in locals() and os.path.exists(git_repo_local_path):
+        if git_repo_local_path is not None and os.path.exists(git_repo_local_path):
+            #if 'git_repo_local_path' in locals() and os.path.exists(git_repo_local_path):
             print(f"\n--- Cleaning up temporary Git repository: {git_repo_local_path} ---")
             # Use shutil.rmtree with ignore_errors and onerror for more robust cleanup
             def onerror(func, path, exc_info):
