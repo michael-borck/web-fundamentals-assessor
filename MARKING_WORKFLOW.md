@@ -1,152 +1,206 @@
 # Marking Workflow: Web Fundamentals Assessment Suite
 
-This document outlines the recommended workflow for lecturers using the Web Fundamentals Assessment Suite to assess student projects. It assumes you have already set up the assessment suite according to the `INSTALL.MD` guide.
+This document outlines the complete workflow for assessing student web development projects using the Web Fundamentals Assessment Suite.
 
-## Overall Goal
+## Overview
 
-The goal is to systematically gather student submission materials, run the automated assessment tools, and generate a comprehensive set of reports that can aid in grading according to the "Portfolio Fusion" rubric (or a similar rubric).
+The assessment process consists of three main stages:
+1. **Preprocessing** - Organizing student submissions and preparing for analysis
+2. **Assessment** - Running automated scripts to evaluate different aspects of student work
+3. **Reporting** - Generating and reviewing assessment reports
 
-## Step 0: Preparation & Setup
+## Prerequisites
 
-1.  **Ensure the Assessment Suite is Ready:**
-    * Confirm all prerequisites from `INSTALL.MD` are met (Python, Git, Node.js, Chrome, WebDrivers, Lighthouse).
-    * Ensure the Python virtual environment is activated and all dependencies from `requirements.txt` are installed.
-    * Familiarise yourself with the scripts available in the `scripts/` directory and the arguments for `main_assessor.py` (if you are using it).
+Before starting, ensure you have:
+- Completed all installation steps in [INSTALL.md](INSTALL.md)
+- Access to student submissions (typically downloaded from an LMS like Blackboard)
+- Basic understanding of the rubric criteria in `docs/simplified_rubric.md`
 
-2.  **Create a Master Assessment Directory (Optional but Recommended):**
-    * It's good practice to have a central location where you will store all student assessment outputs. For example: `~/Assessments/WebFundamentals_Portfolio_S1_2025/`.
-    * The `main_assessor.py` script will create subdirectories for each student within its specified output base directory (e.g., `master_assessment_reports`).
+## Stage 1: Preprocessing
 
-## Step 1: Download and Organise Student Submissions
+### Step 1.1: Organize Student Submissions
 
-For each student:
+1. Create a student folder structure:
+   ```
+   submissions/
+   ├── submissions.csv
+   └── [student_id]/
+       ├── [repository_files]/
+       └── conversations/
+   ```
 
-1.  **Download Submission from Blackboard (or LMS):**
-    * Typically, this will be a `.zip` file containing the student's website project, AI conversation logs (or links to them), their GitHub repository URL, and their live Netlify deployment URL.
-    * Students might also include a README or other documents.
+2. For each student submission:
+   - Create a folder with the student's ID as its name
+   - Extract the student's repository files into this folder
+   - Create a `conversations` subfolder for AI conversation documents
 
-2.  **Create a Student-Specific Working Folder:**
-    * Outside of the `WebFundamentalsAssessor` repository, create a folder for the student (e.g., `~/StudentSubmissions/JohnDoe_123456/`).
+3. Create or update `submissions.csv` with the format:
+   ```
+   student,github,netlify
+   student_id1,https://github.com/student1/repo.git,https://student1-site.netlify.app
+   ```
 
-3.  **Unzip Submission:**
-    * Extract the contents of the student's downloaded `.zip` file into their working folder.
+### Step 1.2: Extract AI Conversations
 
-4.  **Organise Files:**
-    * **Website Files:** Identify the root folder of their website project (containing `index.html`, CSS folders, JS folders, etc.). Let's call this `student_website_folder`.
-    * **AI Conversation Logs:**
-        * If students provided text/JSON files of their AI conversations, gather them into a specific subfolder (e.g., `student_website_folder/ai_chats_manual/` or a separate `JohnDoe_123456/ai_chats_manual/`).
-        * If students provided links to AI conversations (e.g., in a README or a separate text file), note these down or save them to a temporary text file.
-    * **GitHub Repository URL:** Note this down.
-    * **Netlify Deployment URL:** Note this down.
-    * **Other Documents:** Keep any README files or other submission documents handy.
+The system will extract text from various document formats:
 
-## Step 2: Prepare AI Conversation Files
+1. For each student, the preprocessing stage will:
+   - Scan all document files (PDF, DOCX, TXT, MD) in the student's folder
+   - Extract text from PDF and DOCX files
+   - Copy existing text/markdown files
+   - Place all extracted content in the `conversations` subfolder
 
-This step is crucial for the `conversation_analyser.py` script.
+2. This is handled automatically by the pipeline via:
+   ```bash
+   python scripts/gather_conversations.py "[student_dir]/" "[student_dir]/conversations"
+   ```
 
-1.  **Extract AI Conversation URLs (if necessary):**
-    * If students embedded AI conversation share links within their README files or other text-based documents, use the `extract_urls.py` utility script.
-    * **Example:**
-        ```bash
-        # Activate your virtual environment first
-        # Navigate to the WebFundamentalsAssessor directory
-        python scripts/extract_urls.py path/to/JohnDoe_123456/submission_documents/README.md --output path/to/JohnDoe_123456/extracted_chat_urls.txt
-        # Or for a whole folder of documents:
-        python scripts/extract_urls.py path/to/JohnDoe_123456/submission_documents/ --output path/to/JohnDoe_123456/extracted_chat_urls.txt
-        ```
-    * This will create a file (e.g., `extracted_chat_urls.txt`) containing all unique URLs found. Review this file for relevance.
+## Stage 2: Assessment
 
-2.  **Batch Scrape AI Conversations (if URLs were provided/extracted):**
-    * Use the `batch_scrape_conversations.py` script to download the content from the URLs.
-    * Create a target directory for these scraped conversations (e.g., `JohnDoe_123456/ai_chats_scraped/`).
-    * **Example:**
-        ```bash
-        python scripts/batch_scrape_conversations.py path/to/JohnDoe_123456/extracted_chat_urls.txt path/to/JohnDoe_123456/ai_chats_scraped/
-        ```
-    * This script will attempt to scrape each URL and save it as a `.txt` (or `.json`) file in the specified output directory. It will also create a `failed_scrapes.log` file for any URLs that could not be processed. Review this log.
+### Step 2.1: Process All Submissions
 
-3.  **Consolidate AI Conversation Files:**
-    * The `main_assessor.py` script expects a single input folder for AI conversations. This folder should contain:
-        * Any manually provided `.txt` or `.json` chat logs from the student.
-        * The `.txt` or `.json` files generated by `batch_scrape_conversations.py`.
-    * You might need to manually copy files from `ai_chats_manual/` and `ai_chats_scraped/` into a single folder that `main_assessor.py` will use (e.g., `JohnDoe_123456/ai_conversations_for_analysis/`). The `main_assessor.py` script also has logic to help with this consolidation if you provide paths to both manual and scraped files/folders.
+The main assessment process is orchestrated through:
 
-## Step 3: Run the Main Assessor Script
+```bash
+python scripts/process_assessments.py submissions/submissions.csv --submissions-folder submissions --manual-folder-name conversations
+```
 
-Once all inputs for a student are prepared, you can run `main_assessor.py`.
+This script:
+1. Reads the CSV file with student information
+2. For each student:
+   - Identifies their repository and conversations folder
+   - Runs `main_assessor.py` with appropriate parameters
 
-1.  **Gather Inputs for `main_assessor.py`:**
-    * `--student_id`: A unique identifier (e.g., "JohnDoe_123456").
-    * `--website_folder`: Absolute path to the student's root website project folder.
-    * `--manual_conversations_folder`: Absolute path to the folder containing manually saved AI chat logs (optional).
-    * `--chat_scrape_file`: Absolute path to the text file containing URLs of AI conversations to be scraped (optional, created in Step 2.1).
-    * `--git_repo_url`: The student's GitHub repository URL.
-    * `--netlify_url`: The student's live Netlify deployment URL.
-    * `--output_base_dir`: The master directory where all student assessment outputs will be stored (e.g., `~/Assessments/WebFundamentals_Portfolio_S1_2025/master_assessment_reports`).
-    * `--rubric_file`: Path to your `blackboard_rubric.md` (or equivalent).
-    * `--chrome_path` (optional): Path to your Chrome/Chromium executable if not automatically found by Selenium/Lighthouse.
-    * `--no_headless_scraping` (optional): Flag to run AI conversation scraping with a visible browser.
+### Step 2.2: Main Assessment Process
 
-2.  **Execute `main_assessor.py`:**
-    * Navigate to the root directory of the `WebFundamentalsAssessor` repository in your terminal (with the virtual environment activated).
-    * **Example Command:**
-        ```bash
-        python main_assessor.py \
-            --student_id "JohnDoe_123456" \
-            --website_folder "/full/path/to/StudentSubmissions/JohnDoe_123456/student_website_folder/" \
-            --manual_conversations_folder "/full/path/to/StudentSubmissions/JohnDoe_123456/ai_chats_manual/" \
-            --chat_scrape_file "/full/path/to/StudentSubmissions/JohnDoe_123456/extracted_chat_urls.txt" \
-            --git_repo_url "[https://github.com/johndoe/portfolio.git](https://github.com/johndoe/portfolio.git)" \
-            --netlify_url "[https://johndoe-portfolio.netlify.app](https://johndoe-portfolio.netlify.app)" \
-            --output_base_dir "/full/path/to/Assessments/WebFundamentals_Portfolio_S1_2025/master_assessment_reports" \
-            --rubric_file "path/to/your/rubric.md"
-        ```
-    * The script will create a subdirectory for "JohnDoe_123456" inside `master_assessment_reports` and run all configured tools.
+For each student, `main_assessor.py` orchestrates these analysis steps:
 
-## Step 4: Review Reports and Handle Errors
+1. **Setup**:
+   - Creates assessment output directories
+   - Prepares AI conversations for analysis
+   - Clones the student's Git repository (if URL provided)
 
-1.  **Locate Outputs:**
-    * Navigate to the student's output directory (e.g., `master_assessment_reports/JohnDoe_123456/`).
-    * You will find:
-        * `assessment_log.txt`: A detailed log of the `main_assessor.py` execution and output from individual scripts.
-        * Subdirectories for each tool (e.g., `accessibility_reports/`, `performance_reports/`) containing their specific reports (Markdown, CSV, JSON, images).
-        * `final_assessment/JohnDoe_123456_final_assessment_report.md`: The aggregated final report.
+2. **Screenshots**:
+   - Captures desktop and mobile screenshots of the website
 
-2.  **Review the Final Aggregated Report:**
-    * Start with `JohnDoe_123456_final_assessment_report.md`. This report attempts to collate key findings from each tool under relevant rubric sections.
-    * This provides a high-level overview.
+3. **Analysis Tools**:
+   - **Accessibility Analysis**: Evaluates semantic HTML usage and WCAG compliance
+   - **Code Quality Analysis**: Checks code organization and best practices
+   - **Conversation Analysis**: Evaluates AI interaction quality
+   - **Deployment Analysis**: Verifies GitHub and Netlify setup
+   - **Git Analysis**: Examines commit history and repository organization
+   - **Performance Analysis**: Tests website performance metrics
+   - **Responsive Analysis**: Checks mobile-first design implementation
+   - **Validation**: Verifies HTML/CSS validity
 
-3.  **Consult Individual Tool Reports:**
-    * For detailed metrics, specific error messages, or visualisations, refer to the reports in the individual tool subdirectories. For example:
-        * `performance_reports/performance_report.md` for Lighthouse scores and recommendations.
-        * `accessibility_reports/accessibility_summary.md` for accessibility compliance.
-        * `conversation_analysis_reports/summary_report.md` for AI interaction assessment.
+4. **Report Generation**:
+   - Aggregates individual tool reports into a final assessment
+   - Organizes by rubric criteria
+   - Creates a comprehensive Markdown report
 
-4.  **Check the `assessment_log.txt`:**
-    * This log is crucial for understanding the execution flow and identifying any errors encountered while running individual scripts.
-    * If `main_assessor.py` reported issues or if a section in the final report is missing, the log will provide clues (e.g., a script failing, a file not found).
+## Stage 3: Reporting
 
-5.  **Handling Errors / Re-running Individual Scripts:**
-    * If `main_assessor.py` failed to complete a step or if a particular tool's output seems incorrect or missing due to an error:
-        * Consult the `assessment_log.txt` for error messages from the specific tool.
-        * You can run the individual script manually with the correct arguments. For example, if `performance_analyser.py` failed:
-            ```bash
-            # Ensure paths are correct for the student's data
-            python scripts/performance_analyser.py \
-                /full/path/to/StudentSubmissions/JohnDoe_123456/student_website_folder/ \
-                --output /full/path/to/Assessments/WebFundamentals_Portfolio_S1_2025/master_assessment_reports/JohnDoe_123456/performance_reports/
-            ```
-        * Address any underlying issues (e.g., incorrect file paths, missing dependencies for that specific script, issues with the student's submission).
-        * Once the individual script runs successfully, its output will be in the designated folder. You might need to manually incorporate its findings into your final grading or re-run the aggregation part of `main_assessor.py` (which might require a slight modification to `main_assessor.py` to allow re-aggregation without re-running all tools).
+### Step 3.1: Extract Results
 
-## Step 5: Final Grading
+After assessment, extract standardized results tables:
 
-1.  **Use Automated Reports as a Guide:** The generated reports provide quantitative data and identify potential issues based on predefined rules and best practices.
-2.  **Apply Rubric Criteria:** Correlate the findings from the reports with the criteria in your `blackboard_rubric.md`. Many scripts (like `accessibility_checker.py`, `conversation_analyser.py`, `git_analyser.py`, etc.) generate Markdown reports that directly reference rubric sections and provide scores or assessments against them.
-3.  **Manual Review is Still Essential:**
-    * **Qualitative Aspects:** Automated tools cannot fully assess aspects like the creativity of design, the clarity of content, the depth of problem-solving logic (beyond keyword analysis), or the overall user experience.
-    * **Contextual Understanding:** Some "errors" flagged by tools might be intentional or acceptable within the specific context of the student's project.
-    * **Verify Functionality:** Manually test the live Netlify deployment and the functionality of embedded projects.
-4.  **Provide Feedback:** Use the specific examples and data points from the reports to give students constructive and detailed feedback.
+```bash
+python scripts/extract_results.py --all --simplified --ascii --base-dir master_assessment_reports
+```
 
-By following this workflow, you can leverage the assessment suite to make the marking process more efficient, consistent, and data-driven. Remember to adapt the paths and commands to your specific environment and file organisation.
+This creates a `results.txt` file in each student's assessment folder, containing scores for each rubric criterion.
+
+### Step 3.2: Adding Total Scores (Optional)
+
+Optionally, calculate and add total scores to assessment reports:
+
+```bash
+python scripts/add_total_score.py master_assessment_reports/
+```
+
+Or using the shell script:
+
+```bash
+./scripts/add_total_score.sh
+```
+
+### Step 3.3: Manual Review
+
+Instructors should review the generated reports:
+
+1. Navigate to `master_assessment_reports/[student_id]/`
+2. Review `final_assessment/[student_id]_final_assessment_report.md`
+3. Examine the `results.txt` file with extracted scores
+4. Verify assessment accuracy and add manual scores for criteria not covered by automation
+5. Add additional feedback where needed
+
+### Step 3.4: Generate Final Feedback (Optional)
+
+Optionally, use an LLM to generate summary feedback:
+
+```bash
+python scripts/get_feedback.py master_assessment_reports/[student_id]/
+```
+
+Or for all students:
+
+```bash
+./scripts/run_feedback.sh
+```
+
+### Step 3.5: Compress Reports (Optional)
+
+To create compressed archives of all assessment reports:
+
+```bash
+./scripts/compress_assessment_reports.sh
+```
+
+## Complete Pipeline
+
+For convenience, the entire process can be executed with:
+
+```bash
+./run_pipeline.sh
+```
+
+This script:
+1. Runs the conversation extraction process for all students
+2. Processes all submissions using the CSV file
+3. Optionally extracts results in a standardized format
+
+## Processing Individual Students
+
+To process a single student outside the main pipeline:
+
+```bash
+python scripts/main_assessor.py \
+  --student_id "[student_id]" \
+  --website_folder "submissions/[student_id]/[website_folder]" \
+  --manual_conversations_folder "submissions/[student_id]/conversations" \
+  --git_repo_url "https://github.com/[username]/[repo].git" \
+  --netlify_url "https://[site].netlify.app" \
+  --output_base_dir "master_assessment_reports"
+```
+
+## Troubleshooting
+
+If issues occur during assessment:
+
+1. Check the `assessment_log.txt` file in the student's output directory
+2. Verify that all prerequisites are installed correctly
+3. Ensure student submission formats are consistent
+4. For script-specific errors, run individual scripts with `-h` to see available options
+
+## Notes for Handling Edge Cases
+
+- **Missing GitHub/Netlify URLs**: If a student does not provide deployment links, use "none" in the CSV file
+- **Multiple Repository Folders**: If a student has multiple folders, specify the main one manually
+- **Large Files**: Some PDF/DOCX files may take longer to process; increase timeouts if needed
+- **Character Encoding Issues**: Use `--encoding` parameter with extraction scripts if text appears corrupted
+
+## Conclusion
+
+This workflow provides a systematic approach to assessing web development assignments, combining automated analysis with instructor review. The goal is to provide consistent, objective feedback while reducing the manual assessment workload.
+
+For technical details on individual scripts, refer to the comments in the script files themselves or run them with the `-h` flag to see available options.

@@ -2,187 +2,154 @@
 
 ## Overview
 
-This repository contains a collection of Python scripts designed to automate and assist in the assessment of student web development projects, specifically tailored for the "Portfolio Fusion" assignment (or similar web fundamentals courses). The toolkit evaluates various aspects of web development, including accessibility, code quality, responsive design, Git usage, AI interaction, deployment, and performance.
+This repository contains a collection of Python scripts designed to automate and assist in the assessment of student web development projects. The toolkit evaluates various aspects of web development, including accessibility, code quality, responsive design, Git usage, AI interaction, deployment, and performance.
 
-These tools aim to provide objective, consistent, and detailed feedback, aligning with common web development best practices and the provided course rubric, thereby streamlining the grading process for lecturers.
+These tools aim to provide objective, consistent, and detailed feedback, aligning with common web development best practices and the provided course rubric, thereby streamlining the grading process for instructors.
+
+## Quick Start
+
+For a complete end-to-end workflow, run:
+
+```bash
+./run_pipeline.sh
+```
+
+This script will process student submissions, extract AI conversations, run assessments, and generate reports. See [MARKING_WORKFLOW.md](MARKING_WORKFLOW.md) for step-by-step instructions.
+
+## Assessment Pipeline
+
+The assessment process follows these main steps:
+
+1. **Preprocessing**:
+   - Extract text from student submissions (PDF, DOCX, MD, TXT)
+   - Gather AI conversations from different sources
+   - Identify GitHub repositories and Netlify deployments
+
+2. **Assessment**:
+   - Run various analysis scripts for different assessment criteria 
+   - Generate detailed reports for each aspect
+
+3. **Reporting**:
+   - Collate individual reports into final assessment documents
+   - Extract final scores in a standardized format
+   - Generate feedback summaries
 
 ## Features
 
 The suite includes the following assessment scripts and utilities:
 
-* **`accessibility_checker.py`**: Analyses HTML files for common accessibility issues based on semantic HTML, ARIA attributes, and other basic checks.
-* **`batch_scrape_conversations.py`**: A utility to scrape multiple AI conversations from a list of URLs (e.g., ChatGPT share links) and save them as individual files. Uses `scrape_chat.py` internally.
-* **`code_quality_analyser.py`**: Evaluates HTML, CSS, and JavaScript files for code organisation, best practices, and potential issues.
+* **`accessibility_checker.py`**: Analyzes HTML files for common accessibility issues based on semantic HTML, ARIA attributes, and other basic checks.
+* **`batch_scrape_conversations.py`**: A utility to scrape multiple AI conversations from a list of URLs (e.g., ChatGPT share links) and save them as individual files.
+* **`code_quality_analyser.py`**: Evaluates HTML, CSS, and JavaScript files for code organization, best practices, and potential issues.
 * **`conversation_analyser.py`**: Assesses transcripts of student interactions with AI tools, focusing on prompt engineering, critical evaluation, and depth of engagement.
-* **`deployment_analyser.py`**: Checks GitHub repository setup for CI/CD workflows (e.g., GitHub Actions) and analyses Netlify deployment status, SSL, and basic SEO.
-* **`extract_urls.py`**: A utility to find and extract all URLs from a given text file or all text files within a specified folder. Useful for identifying AI conversation share links embedded in student submission documents (e.g., README files, Word documents saved as text).
-* **`git_analyser.py`**: Examines a Git repository's history, analysing commit frequency, message quality, and repository organisation.
-* **`performance_analyser.py`**: Uses Lighthouse (via CLI or npx) to test the performance, accessibility, best practices, and SEO of HTML files.
-* **`responsive_analyser.py`**: Analyses CSS and HTML for responsive design features and compares desktop vs. mobile screenshots to assess layout adaptation.
-* **`scrape_chat.py`**: A utility script using Selenium to scrape a single conversation from a ChatGPT share link (or similar web-based chat interface) and save it as text or JSON. This is primarily used by `batch_scrape_conversations.py`.
-* **`screenshot.py`**: Captures screenshots of web pages at different viewport sizes (desktop, mobile, tablet) using Selenium. It can process local HTML files or crawl a live URL.
+* **`deployment_analyser.py`**: Checks GitHub repository setup for CI/CD workflows and analyzes Netlify deployment status, SSL, and basic SEO.
+* **`extract_links.py`**, **`extract_urls.py`**, **`extract_chatgpt_links.py`**: Utilities to find and extract various types of URLs from student submission documents.
+* **`git_analyser.py`**: Examines a Git repository's history, analyzing commit frequency, message quality, and repository organization.
+* **`main_assessor.py`**: Orchestrates the entire assessment process for a single student.
+* **`performance_analyser.py`**: Uses Lighthouse to test the performance, accessibility, best practices, and SEO of HTML files.
+* **`process_assessments.py`**: Processes the assessment for all students listed in a CSV file.
+* **`responsive_analyser.py`**: Analyzes CSS and HTML for responsive design features and compares desktop vs. mobile screenshots to assess layout adaptation.
+* **`screenshot.py`**: Captures screenshots of web pages at different viewport sizes using Selenium.
 * **`validate_web.py`**: Validates HTML and CSS files using the W3C validation services.
 
 ## Prerequisites
 
 Before using these tools, ensure you have the following installed:
 
-* **Python 3.8+** and `pip`.
-* **Git**: For `git_analyser.py`.
-* **Node.js and npm/npx**: Required by `performance_analyser.py` for Lighthouse.
-* **Google Chrome or Chromium**: Required by `screenshot.py`, `scrape_chat.py`, `batch_scrape_conversations.py`, and `performance_analyser.py`. Ensure it's in your system's PATH.
-* **Web Drivers**:
-    * **ChromeDriver**: If using Chrome. Ensure it's compatible with your Chrome version and in your system's PATH. (Refer to `INSTALL.md` for details).
+* **Python 3.8+** and `pip`
+* **Git**: For `git_analyser.py`
+* **Node.js and npm/npx**: Required by `performance_analyser.py` for Lighthouse
+* **Google Chrome or Chromium**: Required by `screenshot.py`, `scrape_chat.py`, and `performance_analyser.py`
+* **Web Drivers**: ChromeDriver compatible with your Chrome version
 
-## Setup and Installation
+For detailed installation instructions, see [INSTALL.md](INSTALL.md).
 
-1.  **Clone the Repository:**
-    ```bash
-    git clone <your-repo-url>
-    cd WebFundamentalsAssessor  # Or your chosen repository name
-    ```
-
-2.  **Create and Activate a Virtual Environment:**
-    (Refer to `INSTALL.md` for detailed OS-specific instructions if needed).
-    * Using standard `venv`:
-        ```bash
-        python -m venv .venv
-        source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-        ```
-
-3.  **Install Python Dependencies:**
-    A `requirements.txt` file should be generated and included in this repository. This file should include `selenium`, `requests`, `nltk`, `beautifulsoup4`, `matplotlib`, `pandas`, `numpy`, `cssutils`, `esprima`, `PyYAML`, `chardet`, `validators`, and other necessary packages.
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-4.  **Install Lighthouse (Optional but Recommended):**
-    While `performance_analyser.py` can use `npx`, a global Lighthouse installation is often more reliable:
-    ```bash
-    npm install -g lighthouse
-    ```
-
-5.  **NLTK Data:**
-    `conversation_analyser.py` requires NLTK data (`punkt`, `vader_lexicon`, `punkt_tab`). It attempts to download these automatically. Ensure an internet connection on the first run.
-
-6.  **GitHub API Token (Optional):**
-    For `deployment_analyser.py`, set a `GITHUB_TOKEN` environment variable to increase API rate limits.
-
-For more detailed setup instructions, especially regarding WebDrivers and OS-specific nuances, please refer to **`INSTALL.md`**.
-
-## Folder Structure
-
-A recommended folder structure for organising student work and assessment outputs:
+## Directory Structure
 
 ```
-WebFundamentalsAssessor/
-├── .gitignore
-├── README.md
-├── INSTALL.md
-├── MARKING_WORKFLOW.md
-├── requirements.txt
-│
-├── scripts/
+web-fundamentals-assessor/
+├── INSTALL.md                 # Detailed installation instructions
+├── LICENSE.md                 # License information
+├── MARKING_WORKFLOW.md        # Step-by-step marking procedure
+├── README.md                  # This file
+├── docs/                      # Documentation files
+│   ├── blackboard_rubric.md   # Detailed marking rubric
+│   ├── prompt.txt             # LLM prompts for feedback
+│   └── simplified_rubric.md   # Simplified rubric version
+├── master_assessment_reports/ # Output directory for all student assessments
+├── requirements.txt           # Python dependencies
+├── run_pipeline.sh            # Main pipeline execution script
+├── scripts/                   # All assessment scripts
 │   ├── accessibility_checker.py
-│   ├── batch_scrape_conversations.py
-│   ├── code_quality_analyser.py
-│   ├── conversation_analyser.py
-│   ├── deployment_analyser.py
-│   ├── extract_urls.py
-│   ├── git_analyser.py
-│   ├── performance_analyser.py
-│   ├── responsive_analyser.py
-│   ├── scrape_chat.py
-│   ├── screenshot.py
-│   └── validate_web.py
-│
-├── student_projects/
-│   ├── student_A_portfolio/
-│   └── ...
-│
-├── student_submissions_misc/ # For student READMEs, URL lists etc.
-│   ├── student_A_readme.md
-│   └── ...
-│
-├── master_assessment_reports/ # Main output for main_assessor.py (if used)
-│   ├── student_A/
-│   │   ├── ai_conversations_input/ # Populated by manual copy + batch_scrape
-│   │   ├── accessibility_reports/
-│   │   ├── code_quality_reports/
-│   │   ├── conversation_analysis_reports/
-│   │   └── ... (other tool reports)
-│   │   └── final_assessment/
-│   │       └── student_A_final_assessment_report.md
-│   └── student_B/
-│       └── ...
-└── ...
+│   ├── add_total_score.py
+│   ├── add_total_score.sh
+│   └── ... (and other scripts)
+└── submissions/               # Directory containing student submissions
+    ├── submissions.csv        # CSV with student IDs and URLs 
+    └── [student_id]/          # Individual student submission folders
 ```
 
-## Usage
+## Setup and Usage
 
-Each script can be run individually from the command line. For a comprehensive assessment, a `main_assessor.py` script (if implemented and configured) can orchestrate these tools.
+### Basic Setup
 
-Refer to each script's help for specific arguments: `python scripts/<script_name>.py -h`
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/web-fundamentals-assessor.git
+   cd web-fundamentals-assessor
+   ```
 
-**Workflow for AI Conversations:**
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-1.  **Extract URLs (Optional):** If students provide AI conversation links within documents (e.g., their project's README), use `extract_urls.py`:
-    ```bash
-    python scripts/extract_urls.py path/to/student_submission_document.md --output temp_chat_urls.txt
-    # or for a folder
-    python scripts/extract_urls.py path/to/student_submission_folder/ --output temp_chat_urls.txt
-    ```
-2.  **Batch Scrape Conversations:** Use the output from `extract_urls.py` (or a manually created file of URLs) with `batch_scrape_conversations.py` to download the chat logs:
-    ```bash
-    python scripts/batch_scrape_conversations.py temp_chat_urls.txt path/to/student_specific/ai_conversations_input_folder/
-    ```
-    This `ai_conversations_input_folder/` will then be used by `conversation_analyser.py` (often orchestrated by `main_assessor.py`).
+3. Organize student submissions in the `submissions/` directory
 
-**Other Example Individual Script Usages:**
+4. Create a CSV file at `submissions/submissions.csv` with the following format:
+   ```
+   student,github,netlify
+   student_id1,https://github.com/student1/repo.git,https://student1-site.netlify.app
+   student_id2,https://github.com/student2/repo.git,https://student2-site.netlify.app
+   ```
 
-* **Accessibility:**
-    ```bash
-    python scripts/accessibility_checker.py path/to/student_project_folder/ --output-dir path/to/accessibility_reports/
-    ```
-* **Git Analysis:**
-    ```bash
-    python scripts/git_analyser.py path/to/cloned_student_git_repo/ --output path/to/git_reports/
-    ```
+### Running the Assessment Pipeline
 
-### Using `main_assessor.py` (Orchestration Script - if implemented)
+Execute the main pipeline:
+```bash
+./run_pipeline.sh
+```
 
-If a `main_assessor.py` script is implemented (as discussed or provided separately), it would typically take arguments like student ID, paths to the website folder, Git repo URL, Netlify URL, and the prepared AI conversations folder. An example invocation might look like:
+This will:
+1. Process all student folders in `submissions/`
+2. Extract AI conversations from documents
+3. Run all assessment scripts
+4. Generate reports in `master_assessment_reports/`
+
+### Running Individual Scripts
+
+Each script can be run independently. For example:
 
 ```bash
-python main_assessor.py \
-    --student_id "student_A" \
-    --website_folder "student_projects/student_A_portfolio/" \
-    --manual_conversations_folder "path/to/student_A_manual_chats/" \
-    --chat_scrape_file "student_submissions_misc/student_A_chat_urls.txt" \
-    --git_repo_url "[https://github.com/studentA/portfolio](https://github.com/studentA/portfolio)" \
-    --netlify_url "[https://studentA-portfolio.netlify.app](https://studentA-portfolio.netlify.app)" \
-    --output_base_dir "master_assessment_reports"
+# Run accessibility check on a specific student project
+python scripts/accessibility_checker.py submissions/student_id/website_folder --output-dir output/student_id/accessibility_reports
+
+# Extract URLs from a specific document
+python scripts/extract_urls.py submissions/student_id/document.pdf --output links.txt
+
+# Analyze Git repository
+python scripts/git_analyser.py /path/to/git/repo --output output/student_id/git_reports
 ```
-(This assumes `main_assessor.py` is configured to use the other scripts from the `scripts/` directory and handles the workflow of preparing AI conversations using `batch_scrape_conversations.py` internally if `chat_scrape_file` is provided.)
 
-### Output
+For more detailed instructions on each stage of the assessment workflow, refer to [MARKING_WORKFLOW.md](MARKING_WORKFLOW.md).
 
-Individual scripts generate reports (Markdown, CSV, JSON, images) in their specified output directories. An orchestrating script like `main_assessor.py` aims to create a consolidated report in the student's main output folder.
+## Customization
 
-## Key Dependencies and Setup Notes
+You can customize the assessment process by:
 
-* **`extract_urls.py`**: Requires `chardet` (for detecting file encodings) and `validators` (for URL validation).
-* **`batch_scrape_conversations.py`**: Relies on `scrape_chat.py` and its dependencies (Selenium, WebDriver).
-* **Other dependencies:** `selenium`, `requests`, `nltk`, `beautifulsoup4`, `matplotlib`, `pandas`, `numpy`, `cssutils`, `esprima`, `PyYAML`. Ensure all are installed via `requirements.txt`.
-
-For detailed setup, especially for WebDrivers, refer to `INSTALL.md`.
-
-## Troubleshooting
-
-* **"Command not found"**: Check installation and PATH for Python, pip, git, node, npm, lighthouse.
-* **`ModuleNotFoundError`**: Ensure virtual environment is active and `requirements.txt` installed.
-* **Selenium/WebDriver Issues**: Match ChromeDriver to Chrome version; ensure it's in PATH.
-* **NLTK `LookupError`**: Run relevant script with internet access for first-time data download.
+1. Modifying the rubric in `docs/simplified_rubric.md` or `docs/blackboard_rubric.md`
+2. Adjusting threshold values in individual assessment scripts
+3. Adding new assessment scripts and integrating them into `main_assessor.py`
 
 ## License
 
